@@ -106,3 +106,15 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - invalid payload returns `{ok:false,error:...}` in `.playwright/snapshots/t2s2b-invalid.txt`.
   - valid payload returns `{ok:true,data:...}` in `.playwright/snapshots/t2s2b-valid.txt`.
   - console errors: none (`.playwright-cli/console-2026-02-15T14-54-37-233Z.log`).
+
+## Progress Update 8 (Task 3 Step 1)
+- Added multiplayer server bootstrap in `server/index.mjs`:
+  - HTTP `/health` endpoint.
+  - WebSocket upgrade endpoint `/ws`.
+  - initial hello + echo message behavior.
+  - `/favicon.ico` 204 handler to avoid browser console noise.
+- Added npm scripts: `server`, `server:dev`.
+- Verification:
+  - `curl http://127.0.0.1:3000/health` returned OK JSON.
+  - Playwright health page snapshot: `.playwright/snapshots/t3s1b-health.txt`.
+  - Console errors: none (`.playwright-cli/console-2026-02-15T14-56-36-661Z.log`).
