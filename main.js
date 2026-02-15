@@ -19,7 +19,7 @@ const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.ho
 const ROOM_SLOTS = ['p1', 'p2', 'p3', 'p4'];
 const HOST_SLOT = ROOM_SLOTS[0];
 const PLAYER_COLLISION_RADIUS = 0.7;
-const MOVE_SYNC_MS = 110;
+const MOVE_SYNC_MS = 50;
 const FOOTSTEP_INTERVAL_MS = 360;
 
 const app = document.querySelector('#app');
@@ -330,11 +330,21 @@ function getMyPlayer() {
 function fallbackRemoteSpawn(slot) {
   const idx = Math.max(0, ROOM_SLOTS.indexOf(slot));
   return {
-    x: (idx - 1.5) * 1.8,
-    z: -2.8,
-    yaw: 0,
+    targetX: (idx - 1.5) * 1.8,
+    targetZ: -2.8,
+    targetYaw: 0,
+    renderX: (idx - 1.5) * 1.8,
+    renderZ: -2.8,
+    renderYaw: 0,
     at: Date.now()
   };
+}
+
+function lerpAngle(from, to, t) {
+  let delta = to - from;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  return from + delta * t;
 }
 
 function reconnectTokenKey(roomCode = state.roomCode, nickname = state.nickname) {
@@ -472,11 +482,13 @@ function connectSocket(force = false) {
       return;
     }
     if (type === EVENT.PLAYER_POS) {
-      if (payload.slot && payload.slot !== state.mySlot) {
+    if (payload.slot && payload.slot !== state.mySlot) {
+        const prev = state.remotePlayers[payload.slot] || fallbackRemoteSpawn(payload.slot);
         state.remotePlayers[payload.slot] = {
-          x: payload.x,
-          z: payload.z,
-          yaw: payload.yaw,
+          ...prev,
+          targetX: payload.x,
+          targetZ: payload.z,
+          targetYaw: payload.yaw ?? prev.targetYaw ?? 0,
           at: payload.at ?? Date.now()
         };
       }
@@ -813,12 +825,26 @@ function applyServerSnapshot(payload) {
     }
     for (const [slot, pos] of Object.entries(payload.positions)) {
       if (slot === state.mySlot) continue;
-      state.remotePlayers[slot] = {
-        x: pos.x,
-        z: pos.z,
-        yaw: pos.yaw ?? 0,
-        at: pos.at ?? Date.now()
-      };
+      const prev = state.remotePlayers[slot];
+      if (!prev) {
+        state.remotePlayers[slot] = {
+          targetX: pos.x,
+          targetZ: pos.z,
+          targetYaw: pos.yaw ?? 0,
+          renderX: pos.x,
+          renderZ: pos.z,
+          renderYaw: pos.yaw ?? 0,
+          at: pos.at ?? Date.now()
+        };
+      } else {
+        state.remotePlayers[slot] = {
+          ...prev,
+          targetX: pos.x,
+          targetZ: pos.z,
+          targetYaw: pos.yaw ?? prev.targetYaw ?? 0,
+          at: pos.at ?? Date.now()
+        };
+      }
     }
   }
   const myPlayer = payload.players?.[state.mySlot];
@@ -849,12 +875,14 @@ function applyServerGamePatch(payload) {
         applyServerCellPatch(change);
       }
       if (change.type === 'position' && change.slot !== state.mySlot) {
-        state.remotePlayers[change.slot] = {
-          x: change.x,
-          z: change.z,
-          yaw: change.yaw ?? 0,
-          at: Date.now()
-        };
+      const prev = state.remotePlayers[change.slot] || fallbackRemoteSpawn(change.slot);
+      state.remotePlayers[change.slot] = {
+        ...prev,
+        targetX: change.x,
+        targetZ: change.z,
+        targetYaw: change.yaw ?? prev.targetYaw ?? 0,
+        at: Date.now()
+      };
       }
       if (change.type === 'player' && change.slot === state.mySlot && change.deadUntil > Date.now()) {
         state.dead = true;
@@ -1293,7 +1321,7 @@ function drawMap() {
   mapCtx.fillStyle = '#62dd88';
   for (const [slot, pos] of Object.entries(state.remotePlayers)) {
     if (!slot || !pos) continue;
-    const cell = cellFromWorld(pos.x, pos.z);
+    const cell = cellFromWorld(pos.renderX ?? pos.targetX, pos.renderZ ?? pos.targetZ);
     if (!cell) continue;
     mapCtx.beginPath();
     mapCtx.arc(ox + (cell.x + 0.5) * cellPx, oy + (cell.y + 0.5) * cellPx, cellPx * 0.2, 0, Math.PI * 2);
@@ -1328,10 +1356,12 @@ function updateMovement(dt) {
     let blockedByPeer = false;
     for (const pos of Object.values(state.remotePlayers)) {
       if (!pos) continue;
-      const dx = candidate.x - pos.x;
-      const dz = candidate.z - pos.z;
-      const curDx = camera.position.x - pos.x;
-      const curDz = camera.position.z - pos.z;
+      const px = pos.renderX ?? pos.targetX;
+      const pz = pos.renderZ ?? pos.targetZ;
+      const dx = candidate.x - px;
+      const dz = candidate.z - pz;
+      const curDx = camera.position.x - px;
+      const curDz = camera.position.z - pz;
       const minDist = PLAYER_COLLISION_RADIUS * 2;
       const nextDistSq = dx * dx + dz * dz;
       const curDistSq = curDx * curDx + curDz * curDz;
@@ -1420,13 +1450,17 @@ function updateRemoteAvatars() {
   for (const [slot, avatar] of remoteAvatars.entries()) {
     const pos = state.remotePlayers[slot];
     if (!pos) continue;
-    avatar.group.position.set(pos.x, 0, pos.z);
+    const smooth = 0.18;
+    pos.renderX += ((pos.targetX ?? pos.renderX) - pos.renderX) * smooth;
+    pos.renderZ += ((pos.targetZ ?? pos.renderZ) - pos.renderZ) * smooth;
+    pos.renderYaw = lerpAngle(pos.renderYaw ?? 0, pos.targetYaw ?? 0, smooth);
+    avatar.group.position.set(pos.renderX, 0, pos.renderZ);
     const swing = Math.sin((state.elapsedMs / 1000) * 3.5 + ROOM_SLOTS.indexOf(slot)) * 0.06;
     avatar.legLeft.rotation.x = swing;
     avatar.legRight.rotation.x = -swing;
     avatar.armLeft.rotation.x = -swing * 0.9;
     avatar.armRight.rotation.x = swing * 0.9;
-    avatar.group.rotation.y = pos.yaw ?? 0;
+    avatar.group.rotation.y = pos.renderYaw ?? 0;
     avatar.nameTag.quaternion.copy(camera.quaternion);
   }
 }
