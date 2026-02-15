@@ -91,3 +91,18 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/protocol_smoke.mjs` -> `protocol_smoke:ok`.
   - Playwright CLI state check: `.playwright/snapshots/t2s1-state.txt` (includes `protocol_event_count`).
   - Console errors: none (`.playwright-cli/console-2026-02-15T14-51-16-171Z.log`).
+
+## Progress Update 7 (Task 2 Step 2)
+- Added zod-based validation layer in `shared/validation.js`.
+- Added client-side intent validation usage in `main.js` for:
+  - room create/join
+  - ready toggle
+  - game restart/start
+  - cell open/flag intents
+- Added dev hook for validation tests:
+  - `window.__dev_validate_client_message(type, payload)`.
+- Fixed dependency/runtime issue by reinstalling `three` and restarting Vite after dependency changes.
+- Verification:
+  - invalid payload returns `{ok:false,error:...}` in `.playwright/snapshots/t2s2b-invalid.txt`.
+  - valid payload returns `{ok:true,data:...}` in `.playwright/snapshots/t2s2b-valid.txt`.
+  - console errors: none (`.playwright-cli/console-2026-02-15T14-54-37-233Z.log`).

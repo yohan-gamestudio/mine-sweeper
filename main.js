@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { EVENT } from './shared/protocol.js';
+import { validateClientEvent } from './shared/validation.js';
 
 const GRID_SIZE = 16;
 const MINE_COUNT = 40;
@@ -570,6 +571,8 @@ function validNickname(value) {
 }
 
 function startLocalMatch() {
+  const checked = validateClientEvent(EVENT.GAME_START, {});
+  if (!checked.ok) return;
   resetGame();
   renderScreenState();
   safeRequestPointerLock();
@@ -582,6 +585,19 @@ function enterLobbyWithRoom(roomCode) {
   entryError.textContent = '';
   localStorage.setItem('ms_nickname', state.nickname);
   renderScreenState();
+}
+
+function sendLocalIntent(type, payload) {
+  const checked = validateClientEvent(type, payload);
+  if (!checked.ok) {
+    if (state.screen === 'entry') {
+      entryError.textContent = checked.error;
+    } else {
+      hudTip.textContent = `Input blocked: ${checked.error}`;
+    }
+    return null;
+  }
+  return checked.data;
 }
 
 function onMouseDown(event) {
@@ -599,8 +615,12 @@ function onMouseDown(event) {
   if (!cell) return;
 
   if (event.button === 0) {
+    const intent = sendLocalIntent(EVENT.CELL_OPEN, { x: cell.x, y: cell.y });
+    if (!intent) return;
     openCell(cell);
   } else if (event.button === 2) {
+    const intent = sendLocalIntent(EVENT.CELL_FLAG, { x: cell.x, y: cell.y, flagged: !cell.flagged });
+    if (!intent) return;
     toggleFlag(cell);
   }
 }
@@ -620,6 +640,8 @@ btnCreate.addEventListener('click', () => {
     return;
   }
   state.nickname = nickname;
+  const intent = sendLocalIntent(EVENT.ROOM_CREATE, { nickname });
+  if (!intent) return;
   enterLobbyWithRoom(randomRoomCode());
 });
 
@@ -635,11 +657,16 @@ btnJoin.addEventListener('click', () => {
     return;
   }
   state.nickname = nickname;
+  const intent = sendLocalIntent(EVENT.ROOM_JOIN, { nickname, roomCode: code });
+  if (!intent) return;
   enterLobbyWithRoom(code);
 });
 
 btnReady.addEventListener('click', () => {
-  state.localReady = !state.localReady;
+  const nextReady = !state.localReady;
+  const intent = sendLocalIntent(EVENT.PLAYER_READY, { ready: nextReady });
+  if (!intent) return;
+  state.localReady = nextReady;
   renderScreenState();
 });
 
@@ -662,6 +689,8 @@ btnLeave.addEventListener('click', () => {
 });
 
 btnResultRestart.addEventListener('click', () => {
+  const intent = sendLocalIntent(EVENT.GAME_RESTART, {});
+  if (!intent) return;
   startLocalMatch();
 });
 
@@ -718,6 +747,8 @@ if (savedNickname && validNickname(savedNickname)) {
   state.nickname = savedNickname;
   nicknameInput.value = savedNickname;
 }
+
+window.__dev_validate_client_message = (type, payload) => validateClientEvent(type, payload);
 
 renderScreenState();
 
