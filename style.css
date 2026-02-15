@@ -50,6 +50,52 @@ body {
   pointer-events: none;
 }
 
+#chat-panel {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: min(92vw, 420px);
+  background: rgba(9, 14, 20, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 10px;
+  color: #edf3ff;
+  padding: 8px;
+}
+
+#chat-log {
+  min-height: 62px;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+
+#chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+#chat-input {
+  flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #eef5ff;
+  padding: 7px 9px;
+  outline: none;
+}
+
+#chat-send {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(75, 160, 102, 0.85);
+  color: #f6fff9;
+  padding: 7px 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 #overlay {
   position: absolute;
   inset: 0;

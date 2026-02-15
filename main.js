@@ -27,6 +27,13 @@ app.innerHTML = `
     <div id="hud-tip">Click to lock pointer</div>
   </div>
   <div id="crosshair">+</div>
+  <div id="chat-panel">
+    <div id="chat-log"></div>
+    <div id="chat-input-row">
+      <input id="chat-input" maxlength="200" placeholder="team chat..." />
+      <button id="chat-send">Send</button>
+    </div>
+  </div>
   <div id="overlay">
     <div id="entry-card">
       <h1>3D Co-op Minesweeper</h1>
@@ -96,6 +103,10 @@ const resultSub = document.querySelector('#result-sub');
 const mapWrap = document.querySelector('#map-wrap');
 const mapCanvas = document.querySelector('#map-canvas');
 const mapCtx = mapCanvas.getContext('2d');
+const chatPanel = document.querySelector('#chat-panel');
+const chatLog = document.querySelector('#chat-log');
+const chatInput = document.querySelector('#chat-input');
+const chatSend = document.querySelector('#chat-send');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87c1ff);
@@ -259,6 +270,7 @@ const state = {
   guestReady: false,
   mySlot: 'host',
   authoritative: false,
+  chat: [],
   teammatePos: new THREE.Vector2(1, 1),
   cells: [],
   cellsFlat: []
@@ -317,6 +329,8 @@ function connectSocket(force = false) {
     if (type === EVENT.GAME_STATE) {
       resetGame();
       applyServerSnapshot(payload);
+      state.chat = [];
+      renderChat();
       renderScreenState();
       safeRequestPointerLock();
       return;
@@ -332,6 +346,13 @@ function connectSocket(force = false) {
       resultSub.textContent = `Elapsed ${payload?.stats?.elapsedSec ?? 0}s / Explosions ${payload?.stats?.explosions ?? 0}`;
       renderScreenState();
       document.exitPointerLock?.();
+      return;
+    }
+    if (type === EVENT.CHAT_MESSAGE) {
+      appendChatMessage({
+        nickname: payload.nickname ?? 'Teammate',
+        text: payload.text ?? ''
+      });
       return;
     }
     if (type === EVENT.ERROR) {
@@ -548,6 +569,19 @@ function renderScreenState() {
   lobbyGuestReady.textContent = state.guestReady ? 'Ready' : 'Not Ready';
   btnReady.textContent = state.localReady ? 'Unready' : 'Ready';
   btnStart.disabled = !state.localReady;
+  chatPanel.classList.toggle('hidden', state.screen !== 'playing');
+}
+
+function renderChat() {
+  chatLog.innerHTML = state.chat
+    .slice(-8)
+    .map((c) => `<div><strong>${c.nickname}:</strong> ${c.text}</div>`)
+    .join('');
+}
+
+function appendChatMessage(message) {
+  state.chat.push(message);
+  renderChat();
 }
 
 function safeRequestPointerLock() {
@@ -901,6 +935,26 @@ btnResultLobby.addEventListener('click', () => {
   state.localReady = false;
   document.exitPointerLock?.();
   renderScreenState();
+});
+
+function sendChatFromInput() {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  const intent = sendLocalIntent(EVENT.CHAT_SEND, { text });
+  if (!intent) return;
+  sendSocketEvent(EVENT.CHAT_SEND, intent);
+  chatInput.value = '';
+}
+
+chatSend.addEventListener('click', () => {
+  sendChatFromInput();
+});
+
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    sendChatFromInput();
+  }
 });
 
 window.addEventListener('contextmenu', (e) => e.preventDefault());

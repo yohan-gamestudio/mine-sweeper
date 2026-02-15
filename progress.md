@@ -218,3 +218,14 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - host flag action produced synced state (`board.flagged: 1`) on both clients.
   - state outputs: `.playwright/snapshots/t5s3-host-state.txt`, `.playwright/snapshots/t5s3-guest-state.txt`.
   - console errors: none (`...41-801Z.log`, `...41-846Z.log`).
+
+## Progress Update 17 (Task 6 Step 1)
+- Implemented in-room team chat:
+  - Server handles `chat:send` and broadcasts `chat:message` to host/guest in same room.
+  - Client added chat panel (`chat-log`, input, send button) and message rendering.
+  - Chat input validates with shared schema and sends through websocket.
+  - Chat resets on new `game:state` (per-match temporary log).
+- Verification:
+  - `node scripts/ws_chat_smoke.mjs` => `ws_chat_smoke:ok room=...`.
+  - Playwright health snapshot: `.playwright/snapshots/t6s1-health.txt`.
+  - Console errors: none (`.playwright-cli/console-2026-02-15T15-18-42-965Z.log`).

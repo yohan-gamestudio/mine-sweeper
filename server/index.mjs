@@ -414,6 +414,37 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (type === EVENT.CHAT_SEND) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+      const client = clients.get(ws);
+      if (!client?.roomCode || !client.slot) {
+        send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
+        return;
+      }
+      const room = rooms.get(client.roomCode);
+      if (!room) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
+        return;
+      }
+      const chatPayload = {
+        from: client.slot,
+        nickname: client.nickname,
+        text: checked.data.text,
+        at: Date.now()
+      };
+      for (const slot of ['host', 'guest']) {
+        const player = room[slot];
+        if (player?.ws && player.ws.readyState === 1) {
+          send(player.ws, EVENT.CHAT_MESSAGE, chatPayload);
+        }
+      }
+      return;
+    }
+
     send(ws, EVENT.ERROR, { code: 'UNHANDLED_EVENT', message: `unhandled event: ${type}` });
   });
 
