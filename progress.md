@@ -67,3 +67,14 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - playing: `.playwright/snapshots/t1s2v-playing.txt`
   - screenshot: `.playwright/artifacts/t1s2v-playing.png`
   - console errors: none (`.playwright-cli/console-2026-02-15T14-48-43-598Z.log`).
+
+## Progress Update 5 (Task 1 Step 3)
+- Tightened mode guards:
+  - `holdMap` now no-ops unless `screen === playing`.
+  - Pointer-lock is force-released if acquired outside `playing` screen.
+  - Input key set is cleared while not in `playing`.
+- Verified blocked interaction behavior via Playwright CLI:
+  - Entry canvas click keeps entry overlay visible.
+  - Lobby Tab press does not activate in-game map mode.
+  - snapshots: `t1s3b-entry-after-canvas-click.txt`, `t1s3b-lobby-after-tab.txt`
+  - console errors: none (`.playwright-cli/console-2026-02-15T14-49-57-090Z.log`).

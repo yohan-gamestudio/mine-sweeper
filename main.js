@@ -552,6 +552,7 @@ function getTargetCell() {
 }
 
 function holdMap(open) {
+  if (state.screen !== 'playing') return;
   state.mapOpen = open;
   mapWrap.classList.toggle('hidden', !open || state.mode !== 'playing');
   setPointerLockText();
@@ -703,6 +704,10 @@ window.addEventListener('keyup', (e) => {
 
 document.addEventListener('pointerlockchange', () => {
   state.pointerLocked = document.pointerLockElement === renderer.domElement;
+  if (state.pointerLocked && state.screen !== 'playing') {
+    document.exitPointerLock?.();
+    state.pointerLocked = false;
+  }
   setPointerLockText();
 });
 
@@ -893,6 +898,9 @@ function updateTeammateAvatar(dt) {
 }
 
 function step(dt) {
+  if (state.screen !== 'playing' && keys.size > 0) {
+    keys.clear();
+  }
   if (state.mode === 'playing') {
     state.elapsedMs += dt * 1000;
   }
