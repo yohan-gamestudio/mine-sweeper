@@ -327,6 +327,16 @@ function getMyPlayer() {
   return state.players.find((p) => p.slot === state.mySlot);
 }
 
+function fallbackRemoteSpawn(slot) {
+  const idx = Math.max(0, ROOM_SLOTS.indexOf(slot));
+  return {
+    x: (idx - 1.5) * 1.8,
+    z: -2.8,
+    yaw: 0,
+    at: Date.now()
+  };
+}
+
 function reconnectTokenKey(roomCode = state.roomCode, nickname = state.nickname) {
   if (!roomCode || !nickname || roomCode === '----') return '';
   return `ms_reconnect_${roomCode}_${nickname}`;
@@ -385,8 +395,7 @@ function syncRemoteAvatarsFromState() {
     if (p.slot === state.mySlot || p.name === '-') continue;
     upsertRemoteAvatar(p.slot, p.name);
     if (!state.remotePlayers[p.slot]) {
-      const spawn = worldFromCell(Math.floor(GRID_SIZE / 2), Math.floor(GRID_SIZE / 2));
-      state.remotePlayers[p.slot] = { x: spawn.x, z: spawn.z, yaw: 0, at: Date.now() };
+      state.remotePlayers[p.slot] = fallbackRemoteSpawn(p.slot);
     }
   }
 }
@@ -794,6 +803,14 @@ function applyServerSnapshot(payload) {
     }
   }
   if (payload.positions && typeof payload.positions === 'object') {
+    const myPos = payload.positions[state.mySlot];
+    if (myPos && Number.isFinite(myPos.x) && Number.isFinite(myPos.z)) {
+      camera.position.x = myPos.x;
+      camera.position.z = myPos.z;
+      if (Number.isFinite(myPos.yaw)) {
+        state.yaw = myPos.yaw;
+      }
+    }
     for (const [slot, pos] of Object.entries(payload.positions)) {
       if (slot === state.mySlot) continue;
       state.remotePlayers[slot] = {
@@ -1313,8 +1330,12 @@ function updateMovement(dt) {
       if (!pos) continue;
       const dx = candidate.x - pos.x;
       const dz = candidate.z - pos.z;
+      const curDx = camera.position.x - pos.x;
+      const curDz = camera.position.z - pos.z;
       const minDist = PLAYER_COLLISION_RADIUS * 2;
-      if (dx * dx + dz * dz < minDist * minDist) {
+      const nextDistSq = dx * dx + dz * dz;
+      const curDistSq = curDx * curDx + curDz * curDz;
+      if (nextDistSq < minDist * minDist && nextDistSq < curDistSq) {
         blockedByPeer = true;
         break;
       }
@@ -1405,7 +1426,7 @@ function updateRemoteAvatars() {
     avatar.legRight.rotation.x = -swing;
     avatar.armLeft.rotation.x = -swing * 0.9;
     avatar.armRight.rotation.x = swing * 0.9;
-    avatar.group.rotation.y = (pos.yaw ?? 0) + Math.PI;
+    avatar.group.rotation.y = pos.yaw ?? 0;
     avatar.nameTag.quaternion.copy(camera.quaternion);
   }
 }
