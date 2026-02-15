@@ -189,3 +189,18 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - snapshots show transitions: `LOCAL` -> `CONNECTED` -> `RECONNECT 60s`.
   - stable connected check: `.playwright/snapshots/t5s1c-connected.txt`.
   - console errors for stable connected run: none (`.playwright-cli/console-2026-02-15T15-09-26-604Z.log`).
+
+## Progress Update 15 (Task 5 Step 2)
+- Wired lobby UI actions to real websocket events:
+  - create/join now send socket events (`room:create`, `room:join`).
+  - ready button sends `player:ready`.
+  - start button sends `game:start`.
+- Added socket message handlers in client for:
+  - `room:state` (room code, host/guest names, ready flags).
+  - `game:state` (transition into playing screen).
+  - `error` (surface message in entry/HUD).
+- Added outbound queue for events sent before socket open.
+- Verification (2-browser sessions via Playwright CLI):
+  - host/guest both show same room code and synchronized lobby names/ready states.
+  - snapshots: `t5s2-guest-lobby.txt`, `t5s2-host-after-guest.txt`.
+  - console errors: none (`...24-278Z.log`, `...24-329Z.log`).

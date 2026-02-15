@@ -81,6 +81,7 @@ const entryError = document.querySelector('#entry-error');
 const lobbyRoomCode = document.querySelector('#lobby-room-code');
 const lobbyHostName = document.querySelector('#lobby-host-name');
 const lobbyHostReady = document.querySelector('#lobby-host-ready');
+const lobbyGuestName = document.querySelector('#lobby-guest-name');
 const lobbyGuestReady = document.querySelector('#lobby-guest-ready');
 const btnCreate = document.querySelector('#btn-create');
 const btnJoin = document.querySelector('#btn-join');
@@ -252,12 +253,17 @@ const state = {
   nickname: 'Player1',
   roomCode: '----',
   localReady: false,
+  hostName: 'Host',
+  hostReady: false,
+  guestName: 'Guest',
+  guestReady: false,
   teammatePos: new THREE.Vector2(1, 1),
   cells: [],
   cellsFlat: []
 };
 
 let socket = null;
+const pendingSocketMessages = [];
 
 function setConnState(next) {
   state.connState = next;
@@ -276,6 +282,46 @@ function connectSocket(force = false) {
     setConnState('CONNECTED');
     state.reconnectLeft = 0;
     state.reconnectAt = 0;
+    while (pendingSocketMessages.length > 0) {
+      const message = pendingSocketMessages.shift();
+      socket.send(JSON.stringify(message));
+    }
+  });
+  socket.addEventListener('message', (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(String(event.data));
+    } catch {
+      return;
+    }
+    const type = msg?.type;
+    const payload = msg?.payload ?? {};
+    if (type === EVENT.ROOM_STATE) {
+      state.roomCode = payload.roomCode ?? state.roomCode;
+      state.hostName = payload.host?.name ?? '-';
+      state.hostReady = Boolean(payload.host?.ready);
+      state.guestName = payload.guest?.name ?? '-';
+      state.guestReady = Boolean(payload.guest?.ready);
+      if (state.nickname === state.hostName) {
+        state.localReady = state.hostReady;
+      } else if (state.nickname === state.guestName) {
+        state.localReady = state.guestReady;
+      }
+      renderScreenState();
+      return;
+    }
+    if (type === EVENT.GAME_STATE) {
+      startLocalMatch();
+      return;
+    }
+    if (type === EVENT.ERROR) {
+      const text = payload?.message || 'server error';
+      if (state.screen === 'entry') {
+        entryError.textContent = text;
+      } else {
+        hudTip.textContent = `Server: ${text}`;
+      }
+    }
   });
   socket.addEventListener('close', () => {
     if (state.screen === 'entry') {
@@ -293,6 +339,15 @@ function connectSocket(force = false) {
       state.reconnectLeft = 60;
     }
   });
+}
+
+function sendSocketEvent(type, payload) {
+  if (!socket || socket.readyState !== 1) {
+    pendingSocketMessages.push({ type, payload });
+    return false;
+  }
+  socket.send(JSON.stringify({ type, payload }));
+  return true;
 }
 
 function worldFromCell(x, y) {
@@ -466,9 +521,10 @@ function renderScreenState() {
   resultCard.classList.toggle('hidden', state.screen !== 'result');
 
   lobbyRoomCode.textContent = state.roomCode;
-  lobbyHostName.textContent = state.nickname;
-  lobbyHostReady.textContent = state.localReady ? 'Ready' : 'Not Ready';
-  lobbyGuestReady.textContent = 'Ready';
+  lobbyHostName.textContent = state.hostName;
+  lobbyHostReady.textContent = state.hostReady ? 'Ready' : 'Not Ready';
+  lobbyGuestName.textContent = state.guestName;
+  lobbyGuestReady.textContent = state.guestReady ? 'Ready' : 'Not Ready';
   btnReady.textContent = state.localReady ? 'Unready' : 'Ready';
   btnStart.disabled = !state.localReady;
 }
@@ -624,6 +680,10 @@ function enterLobbyWithRoom(roomCode) {
   connectSocket();
   state.roomCode = roomCode;
   state.localReady = false;
+  state.hostName = '-';
+  state.hostReady = false;
+  state.guestName = '-';
+  state.guestReady = false;
   state.screen = 'lobby';
   entryError.textContent = '';
   localStorage.setItem('ms_nickname', state.nickname);
@@ -685,7 +745,8 @@ btnCreate.addEventListener('click', () => {
   state.nickname = nickname;
   const intent = sendLocalIntent(EVENT.ROOM_CREATE, { nickname });
   if (!intent) return;
-  enterLobbyWithRoom(randomRoomCode());
+  enterLobbyWithRoom('----');
+  sendSocketEvent(EVENT.ROOM_CREATE, intent);
 });
 
 btnJoin.addEventListener('click', () => {
@@ -703,19 +764,21 @@ btnJoin.addEventListener('click', () => {
   const intent = sendLocalIntent(EVENT.ROOM_JOIN, { nickname, roomCode: code });
   if (!intent) return;
   enterLobbyWithRoom(code);
+  sendSocketEvent(EVENT.ROOM_JOIN, intent);
 });
 
 btnReady.addEventListener('click', () => {
   const nextReady = !state.localReady;
   const intent = sendLocalIntent(EVENT.PLAYER_READY, { ready: nextReady });
   if (!intent) return;
-  state.localReady = nextReady;
-  renderScreenState();
+  sendSocketEvent(EVENT.PLAYER_READY, intent);
 });
 
 btnStart.addEventListener('click', () => {
   if (!state.localReady) return;
-  startLocalMatch();
+  const intent = sendLocalIntent(EVENT.GAME_START, {});
+  if (!intent) return;
+  sendSocketEvent(EVENT.GAME_START, intent);
 });
 
 btnLeave.addEventListener('click', () => {
@@ -733,6 +796,7 @@ btnLeave.addEventListener('click', () => {
   } catch {
     // noop
   }
+  pendingSocketMessages.length = 0;
   setConnState('LOCAL');
   state.reconnectLeft = 0;
   state.reconnectAt = 0;
@@ -742,6 +806,7 @@ btnLeave.addEventListener('click', () => {
 btnResultRestart.addEventListener('click', () => {
   const intent = sendLocalIntent(EVENT.GAME_RESTART, {});
   if (!intent) return;
+  sendSocketEvent(EVENT.GAME_RESTART, intent);
   startLocalMatch();
 });
 
