@@ -269,3 +269,12 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
 - Verification:
   - `node scripts/ws_restart_smoke.mjs` => `ws_restart_smoke:ok room=...`.
   - Regression: chat/reconnect/solo-timeout smokes passed.
+
+## Progress Update 21 (Task 7 Step 1)
+- Added PRD compliance sweep document: `QA_CHECKLIST.md`.
+- Checklist now maps PRD/SCREEN requirements to implemented status.
+- Recorded explicit known gaps (teammate position sync, player collision, audio scope).
+- Verification:
+  - Playwright CLI snapshots captured for current host/guest state:
+    - `.playwright/snapshots/t7s1-host-current.txt`
+    - `.playwright/snapshots/t7s1-guest-current.txt`
