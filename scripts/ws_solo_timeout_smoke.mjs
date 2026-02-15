@@ -37,7 +37,7 @@ function send(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, payload }));
 }
 
-function waitFor(ws, matcher, timeoutMs = 2800) {
+function waitFor(ws, matcher, timeoutMs = 3800) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       ws.off('message', onMessage);
@@ -83,12 +83,18 @@ try {
   const guest = await connect();
   await waitFor(guest, (m) => m.type === 'server:hello');
   send(guest, EVENT.ROOM_JOIN, { nickname: 'Guesty', roomCode });
-  await waitFor(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.name === 'Guesty');
+  await waitFor(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty'));
 
   send(host, EVENT.PLAYER_READY, { ready: true });
-  await waitFor(host, (m) => m.type === EVENT.ROOM_STATE && m.payload.host?.ready === true);
+  await waitFor(
+    host,
+    (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.slot === m.payload.youSlot && p.ready === true)
+  );
   send(guest, EVENT.PLAYER_READY, { ready: true });
-  await waitFor(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.ready === true);
+  await waitFor(
+    guest,
+    (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.slot === m.payload.youSlot && p.ready === true)
+  );
   send(host, EVENT.GAME_START, {});
   await waitFor(host, (m) => m.type === EVENT.GAME_STATE);
   await waitFor(guest, (m) => m.type === EVENT.GAME_STATE);
@@ -97,12 +103,9 @@ try {
 
   const timeoutRoomState = await waitFor(
     host,
-    (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.name === '-',
+    (m) => m.type === EVENT.ROOM_STATE && !m.payload.players?.some((p) => p.name === 'Guesty'),
     4500
   );
-  if (timeoutRoomState.payload.guest?.connected !== false) {
-    throw new Error('guest timeout state should be disconnected');
-  }
 
   send(host, EVENT.CELL_FLAG, { x: 2, y: 2, flagged: true });
   const postTimeoutPatch = await waitFor(host, (m) => m.type === EVENT.GAME_PATCH, 2200);

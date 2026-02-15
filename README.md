@@ -3,8 +3,9 @@
 Multiplayer-first 3D minesweeper prototype.
 - 3D world + first-person movement (WASD, jump, sprint)
 - 2D authoritative mines board (16x16, 40 mines)
-- 2-player room system (4-digit room code)
+- up to 4-player room system (4-digit room code)
 - shared lives, respawn lock, reconnect window, solo continuation
+- teammate position sync + player collision (no push) + basic gameplay audio cues
 
 ## Stack
 - Client: Vite + Three.js (`main.js`)
@@ -49,15 +50,16 @@ Open:
 
 ## Multiplayer Flow
 1. Host enters nickname and clicks `Create Room`.
-2. Guest enters nickname + room code and clicks `Join`.
-3. Both click `Ready`.
-4. Host clicks `Start`.
+2. Up to 3 guests enter nickname + room code and click `Join`.
+3. All connected players click `Ready` (minimum 2 players required).
+4. Host (`p1`) clicks `Start`.
 5. During result, host can `Restart` same room (new board seed).
 
 ## Verification
 Core ws smoke checks:
 ```bash
 node scripts/ws_room_smoke.mjs
+node scripts/ws_four_player_room_smoke.mjs
 node scripts/ws_ready_start_smoke.mjs
 node scripts/ws_patch_consistency_smoke.mjs
 node scripts/ws_life_respawn_smoke.mjs
@@ -84,4 +86,4 @@ scripts/playwright_smoke_scenarios.sh
 - `QA_CHECKLIST.md`: compliance sweep
 
 ## Notes
-Known gaps are tracked in `QA_CHECKLIST.md`.
+- Reconnect slot recovery is currently nickname-based.

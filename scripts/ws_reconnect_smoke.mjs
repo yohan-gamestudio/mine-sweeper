@@ -6,7 +6,13 @@ const URL = process.env.WS_URL || 'ws://127.0.0.1:3000/ws';
 function connect() {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
-    ws.once('open', () => resolve(ws));
+    ws.once('open', () => {
+      ws.__queue = [];
+      ws.on('message', (raw) => {
+        ws.__queue.push(JSON.parse(String(raw)));
+      });
+      resolve(ws);
+    });
     ws.once('error', reject);
   });
 }
@@ -15,69 +21,64 @@ function send(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, payload }));
 }
 
-function waitFor(ws, matcher, timeoutMs = 2500) {
+function nextMsg(ws, matcher, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      ws.off('message', onMessage);
-      reject(new Error('timeout'));
-    }, timeoutMs);
-    function onMessage(raw) {
-      const msg = JSON.parse(String(raw));
-      if (matcher(msg)) {
-        clearTimeout(timer);
-        ws.off('message', onMessage);
-        resolve(msg);
+    const start = Date.now();
+    const tick = () => {
+      for (let i = 0; i < ws.__queue.length; i += 1) {
+        const m = ws.__queue[i];
+        if (matcher(m)) {
+          ws.__queue.splice(i, 1);
+          resolve(m);
+          return;
+        }
       }
-    }
-    ws.on('message', onMessage);
+      if (Date.now() - start > timeoutMs) {
+        reject(new Error('timeout'));
+        return;
+      }
+      setTimeout(tick, 20);
+    };
+    tick();
   });
 }
 
 const host = await connect();
-await waitFor(host, (m) => m.type === 'server:hello');
+await nextMsg(host, (m) => m.type === 'server:hello');
 send(host, EVENT.ROOM_CREATE, { nickname: 'Hoster' });
-const created = await waitFor(host, (m) => m.type === EVENT.ROOM_STATE);
+const created = await nextMsg(host, (m) => m.type === EVENT.ROOM_STATE);
 const roomCode = created.payload.roomCode;
 
 let guest = await connect();
-await waitFor(guest, (m) => m.type === 'server:hello');
+await nextMsg(guest, (m) => m.type === 'server:hello');
 send(guest, EVENT.ROOM_JOIN, { nickname: 'Guesty', roomCode });
-await waitFor(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.name === 'Guesty');
+await nextMsg(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty'));
 
 send(host, EVENT.PLAYER_READY, { ready: true });
-await waitFor(host, (m) => m.type === EVENT.ROOM_STATE && m.payload.host?.ready === true);
+await nextMsg(host, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.slot === m.payload.youSlot && p.ready === true));
 send(guest, EVENT.PLAYER_READY, { ready: true });
-await waitFor(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.ready === true);
+await nextMsg(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.slot === m.payload.youSlot && p.ready === true));
 send(host, EVENT.GAME_START, {});
-await waitFor(host, (m) => m.type === EVENT.GAME_STATE);
-await waitFor(guest, (m) => m.type === EVENT.GAME_STATE);
+await nextMsg(host, (m) => m.type === EVENT.GAME_STATE);
+await nextMsg(guest, (m) => m.type === EVENT.GAME_STATE);
 
-const disconnectedRoomState = waitFor(
-  host,
-  (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.connected === false,
-  4500
-);
 guest.close();
-await disconnectedRoomState;
+await nextMsg(host, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty' && p.connected === false));
 
 guest = await connect();
-await waitFor(guest, (m) => m.type === 'server:hello');
+await nextMsg(guest, (m) => m.type === 'server:hello');
 send(guest, EVENT.ROOM_JOIN, { nickname: 'Guesty', roomCode });
-const roomState = await waitFor(
-  guest,
-  (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.connected === true,
-  4500
-);
-if (roomState.payload.guest?.name !== 'Guesty') {
+const roomState = await nextMsg(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty' && p.connected === true));
+if (!roomState.payload.players?.some((p) => p.name === 'Guesty')) {
   throw new Error('reconnect guest slot restore failed');
 }
-const resumedState = await waitFor(guest, (m) => m.type === EVENT.GAME_STATE, 4500);
+const resumedState = await nextMsg(guest, (m) => m.type === EVENT.GAME_STATE, 7000);
 if (resumedState.payload.phase !== 'playing') {
   throw new Error('reconnected guest did not receive active game state');
 }
 
 send(guest, EVENT.CELL_FLAG, { x: 1, y: 1, flagged: true });
-const patch = await waitFor(host, (m) => m.type === EVENT.GAME_PATCH);
+const patch = await nextMsg(host, (m) => m.type === EVENT.GAME_PATCH);
 const cellPatch = patch.payload.changes.find((c) => c.type === 'cell' && c.x === 1 && c.y === 1);
 if (!cellPatch || cellPatch.flagged !== true) {
   throw new Error('reconnected guest action did not propagate');

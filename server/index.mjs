@@ -36,72 +36,114 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ noServer: true });
 const rooms = new Map();
 const clients = new Map();
+
+const ROOM_SLOTS = Object.freeze(['p1', 'p2', 'p3', 'p4']);
+const HOST_SLOT = ROOM_SLOTS[0];
 const RESPAWN_MS = 3000;
 const START_LIVES = 5;
 const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS || 60000);
 const ROOM_SWEEP_MS = Number(process.env.ROOM_SWEEP_MS || 5000);
+const MIN_START_PLAYERS = 2;
 
 function makeInitialPlayerState() {
   return { deadUntil: 0, explosions: 0 };
+}
+
+function makeEmptySlots() {
+  return Object.fromEntries(ROOM_SLOTS.map((slot) => [slot, null]));
+}
+
+function makeDefaultSpawn(slot) {
+  const idx = ROOM_SLOTS.indexOf(slot);
+  return {
+    x: (idx - 1.5) * 1.8,
+    z: -2.8,
+    yaw: 0,
+    at: Date.now()
+  };
 }
 
 function send(ws, type, payload) {
   ws.send(JSON.stringify({ type, payload }));
 }
 
-function roomStatePayload(room) {
-  return {
-    roomCode: room.code,
-    host: {
-      name: room.host?.nickname ?? '-',
-      ready: room.host?.ready ?? false,
-      connected: Boolean(room.host?.ws && room.host.ws.readyState === 1)
-    },
-    guest: {
-      name: room.guest?.nickname ?? '-',
-      ready: room.guest?.ready ?? false,
-      connected: Boolean(room.guest?.ws && room.guest.ws.readyState === 1)
-    }
-  };
+function isPlayerConnected(player) {
+  return Boolean(player?.ws && player.ws.readyState === 1);
 }
 
 function isReconnectable(player) {
   if (!player) return false;
-  if (player.ws && player.ws.readyState === 1) return true;
+  if (isPlayerConnected(player)) return true;
   if (!player.disconnectedAt) return false;
   return Date.now() - player.disconnectedAt <= RECONNECT_GRACE_MS;
+}
+
+function listConnectedSlots(room) {
+  return ROOM_SLOTS.filter((slot) => isPlayerConnected(room.players[slot]));
+}
+
+function listReconnectableSlots(room) {
+  return ROOM_SLOTS.filter((slot) => isReconnectable(room.players[slot]));
+}
+
+function roomStatePayload(room, youSlot) {
+  return {
+    roomCode: room.code,
+    hostSlot: HOST_SLOT,
+    youSlot,
+    players: ROOM_SLOTS.map((slot) => ({
+      slot,
+      name: room.players[slot]?.nickname ?? '-',
+      ready: room.players[slot]?.ready ?? false,
+      connected: isPlayerConnected(room.players[slot])
+    }))
+  };
+}
+
+function gamePlayersPayload(room) {
+  if (!room.game) return {};
+  const out = {};
+  for (const [slot, playerState] of Object.entries(room.game.players)) {
+    out[slot] = { deadUntil: playerState.deadUntil };
+  }
+  return out;
+}
+
+function gamePositionsPayload(room) {
+  const out = {};
+  for (const [slot, pos] of Object.entries(room.positions)) {
+    out[slot] = { x: pos.x, z: pos.z, yaw: pos.yaw, at: pos.at };
+  }
+  return out;
 }
 
 function broadcastRoomState(roomCode) {
   const room = rooms.get(roomCode);
   if (!room) return;
-  const payload = roomStatePayload(room);
-  for (const slot of ['host', 'guest']) {
-    const player = room[slot];
-    if (player?.ws && player.ws.readyState === 1) {
-      send(player.ws, EVENT.ROOM_STATE, payload);
+  for (const slot of ROOM_SLOTS) {
+    const player = room.players[slot];
+    if (isPlayerConnected(player)) {
+      send(player.ws, EVENT.ROOM_STATE, roomStatePayload(room, slot));
     }
   }
 }
 
 function broadcastGameState(room) {
   if (!room.game) return;
-  const payload = {
+  const payloadBase = {
     phase: room.game.phase,
     roomCode: room.code,
     lives: room.game.lives,
     gridSize: room.game.board.size,
     mineCount: room.game.board.mines,
     cells: boardToPublicCells(room.game.board),
-    players: {
-      host: { deadUntil: room.game.players.host.deadUntil },
-      guest: { deadUntil: room.game.players.guest.deadUntil }
-    }
+    players: gamePlayersPayload(room),
+    positions: gamePositionsPayload(room)
   };
-  for (const slot of ['host', 'guest']) {
-    const player = room[slot];
-    if (player?.ws && player.ws.readyState === 1) {
-      send(player.ws, EVENT.GAME_STATE, payload);
+  for (const slot of ROOM_SLOTS) {
+    const player = room.players[slot];
+    if (isPlayerConnected(player)) {
+      send(player.ws, EVENT.GAME_STATE, { ...payloadBase, youSlot: slot });
     }
   }
 }
@@ -112,32 +154,48 @@ function broadcastGamePatch(room, actorSlot, changes = []) {
     actor: actorSlot,
     lives: room.game.lives,
     phase: room.game.phase,
-    players: {
-      host: { deadUntil: room.game.players.host.deadUntil },
-      guest: { deadUntil: room.game.players.guest.deadUntil }
-    },
+    players: gamePlayersPayload(room),
     changes
   };
-  for (const slot of ['host', 'guest']) {
-    const player = room[slot];
-    if (player?.ws && player.ws.readyState === 1) {
+  for (const slot of ROOM_SLOTS) {
+    const player = room.players[slot];
+    if (isPlayerConnected(player)) {
       send(player.ws, EVENT.GAME_PATCH, payload);
     }
   }
 }
 
 function broadcastGameResult(room, outcome) {
+  const totalExplosions = Object.values(room.game.players).reduce((acc, p) => acc + (p.explosions || 0), 0);
   const payload = {
     outcome,
     stats: {
       elapsedSec: Math.round((Date.now() - room.game.startedAt) / 1000),
-      explosions: room.game.players.host.explosions + room.game.players.guest.explosions
+      explosions: totalExplosions
     }
   };
-  for (const slot of ['host', 'guest']) {
-    const player = room[slot];
-    if (player?.ws && player.ws.readyState === 1) {
+  for (const slot of ROOM_SLOTS) {
+    const player = room.players[slot];
+    if (isPlayerConnected(player)) {
       send(player.ws, EVENT.GAME_RESULT, payload);
+    }
+  }
+}
+
+function broadcastPlayerPos(room, slot) {
+  const pos = room.positions[slot];
+  if (!pos) return;
+  const payload = {
+    slot,
+    x: pos.x,
+    z: pos.z,
+    yaw: pos.yaw,
+    at: pos.at
+  };
+  for (const peerSlot of ROOM_SLOTS) {
+    const player = room.players[peerSlot];
+    if (isPlayerConnected(player)) {
+      send(player.ws, EVENT.PLAYER_POS, payload);
     }
   }
 }
@@ -150,31 +208,59 @@ function makeRoomCode() {
   return null;
 }
 
+function reclaimSlot(room, nickname, ws) {
+  for (const slot of ROOM_SLOTS) {
+    const player = room.players[slot];
+    if (player?.nickname === nickname && !player.ws && isReconnectable(player)) {
+      player.ws = ws;
+      player.disconnectedAt = 0;
+      return slot;
+    }
+  }
+  return null;
+}
+
+function findJoinableSlot(room) {
+  for (const slot of ROOM_SLOTS) {
+    const player = room.players[slot];
+    if (!player || !isReconnectable(player)) return slot;
+  }
+  return null;
+}
+
+function ensureRoomPosition(room, slot) {
+  if (!room.positions[slot]) {
+    room.positions[slot] = makeDefaultSpawn(slot);
+  }
+}
+
 function leaveRoom(ws, { disconnect = false } = {}) {
   const client = clients.get(ws);
-  if (!client?.roomCode) return;
+  if (!client?.roomCode || !client.slot) return;
   const room = rooms.get(client.roomCode);
-  if (!room) return;
+  if (!room) {
+    clients.delete(ws);
+    return;
+  }
 
-  if (client.slot === 'host') {
-    if (disconnect && room.host?.nickname === client.nickname) {
-      room.host.ws = null;
-      room.host.disconnectedAt = Date.now();
+  const player = room.players[client.slot];
+  if (player && player.nickname === client.nickname) {
+    if (disconnect) {
+      player.ws = null;
+      player.disconnectedAt = Date.now();
+      player.ready = false;
     } else {
-      room.host = null;
-    }
-  } else if (client.slot === 'guest') {
-    if (disconnect && room.guest?.nickname === client.nickname) {
-      room.guest.ws = null;
-      room.guest.disconnectedAt = Date.now();
-    } else {
-      room.guest = null;
+      room.players[client.slot] = null;
+      delete room.positions[client.slot];
+      if (room.game?.players?.[client.slot]) {
+        delete room.game.players[client.slot];
+      }
     }
   }
 
   clients.delete(ws);
 
-  if (!isReconnectable(room.host) && !isReconnectable(room.guest)) {
+  if (listReconnectableSlots(room).length === 0) {
     rooms.delete(room.code);
     return;
   }
@@ -185,22 +271,39 @@ setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     let changed = false;
-    for (const slot of ['host', 'guest']) {
-      const player = room[slot];
+    for (const slot of ROOM_SLOTS) {
+      const player = room.players[slot];
       if (player && !player.ws && player.disconnectedAt && now - player.disconnectedAt > RECONNECT_GRACE_MS) {
-        room[slot] = null;
+        room.players[slot] = null;
+        delete room.positions[slot];
         changed = true;
       }
     }
-    if (!isReconnectable(room.host) && !isReconnectable(room.guest)) {
+
+    if (listReconnectableSlots(room).length === 0) {
       rooms.delete(room.code);
       continue;
     }
+
     if (changed) {
       broadcastRoomState(room.code);
     }
   }
 }, ROOM_SWEEP_MS);
+
+function initGameForRoom(room) {
+  const participantSlots = ROOM_SLOTS.filter((slot) => room.players[slot] && isReconnectable(room.players[slot]));
+  room.game = {
+    phase: 'playing',
+    lives: START_LIVES,
+    board: createBoard({ size: 16, mines: 40 }),
+    startedAt: Date.now(),
+    players: Object.fromEntries(participantSlots.map((slot) => [slot, makeInitialPlayerState()]))
+  };
+  for (const slot of participantSlots) {
+    ensureRoomPosition(room, slot);
+  }
+}
 
 wss.on('connection', (ws) => {
   clients.set(ws, { roomCode: null, slot: null, nickname: null });
@@ -235,15 +338,19 @@ wss.on('connection', (ws) => {
       }
 
       leaveRoom(ws);
+
       const room = {
         code,
-        host: { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 },
-        guest: null,
+        players: makeEmptySlots(),
         started: false,
-        game: null
+        game: null,
+        positions: {}
       };
+      room.players[HOST_SLOT] = { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 };
+      ensureRoomPosition(room, HOST_SLOT);
+
       rooms.set(code, room);
-      clients.set(ws, { roomCode: code, slot: 'host', nickname: checked.data.nickname });
+      clients.set(ws, { roomCode: code, slot: HOST_SLOT, nickname: checked.data.nickname });
       broadcastRoomState(code);
       return;
     }
@@ -262,23 +369,24 @@ wss.on('connection', (ws) => {
 
       leaveRoom(ws);
 
-      if (room.host?.nickname === checked.data.nickname && !room.host.ws && isReconnectable(room.host)) {
-        room.host.ws = ws;
-        room.host.disconnectedAt = 0;
-        clients.set(ws, { roomCode: room.code, slot: 'host', nickname: checked.data.nickname });
-      } else if (room.guest?.nickname === checked.data.nickname && !room.guest.ws && isReconnectable(room.guest)) {
-        room.guest.ws = ws;
-        room.guest.disconnectedAt = 0;
-        clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
-      } else if (!room.guest || !isReconnectable(room.guest)) {
-        room.guest = { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 };
-        clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
-      } else {
-        send(ws, EVENT.ERROR, { code: 'ROOM_FULL', message: 'room is already full' });
-        return;
+      let slot = reclaimSlot(room, checked.data.nickname, ws);
+      if (!slot) {
+        if (room.started && room.game) {
+          send(ws, EVENT.ERROR, { code: 'ROOM_IN_PROGRESS', message: 'only reconnect is allowed during game' });
+          return;
+        }
+        slot = findJoinableSlot(room);
+        if (!slot) {
+          send(ws, EVENT.ERROR, { code: 'ROOM_FULL', message: 'room is already full' });
+          return;
+        }
+        room.players[slot] = { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 };
       }
 
+      ensureRoomPosition(room, slot);
+      clients.set(ws, { roomCode: room.code, slot, nickname: checked.data.nickname });
       broadcastRoomState(room.code);
+
       if (room.started && room.game) {
         send(ws, EVENT.GAME_STATE, {
           phase: room.game.phase,
@@ -287,10 +395,9 @@ wss.on('connection', (ws) => {
           gridSize: room.game.board.size,
           mineCount: room.game.board.mines,
           cells: boardToPublicCells(room.game.board),
-          players: {
-            host: { deadUntil: room.game.players.host.deadUntil },
-            guest: { deadUntil: room.game.players.guest.deadUntil }
-          }
+          players: gamePlayersPayload(room),
+          positions: gamePositionsPayload(room),
+          youSlot: slot
         });
       }
       return;
@@ -308,12 +415,14 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
         return;
       }
+
       const room = rooms.get(client.roomCode);
-      if (!room || !room[client.slot]) {
+      if (!room || !room.players[client.slot]) {
         send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
         return;
       }
-      room[client.slot].ready = checked.data.ready;
+
+      room.players[client.slot].ready = checked.data.ready;
       broadcastRoomState(room.code);
       return;
     }
@@ -324,35 +433,38 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
         return;
       }
+
       const client = clients.get(ws);
       if (!client?.roomCode || !client.slot) {
         send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
         return;
       }
+
       const room = rooms.get(client.roomCode);
       if (!room) {
         send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
         return;
       }
-      if (client.slot !== 'host') {
+
+      if (client.slot !== HOST_SLOT) {
         send(ws, EVENT.ERROR, { code: 'HOST_ONLY', message: 'only host can start game' });
         return;
       }
-      if (!room.host?.ready || !room.guest?.ready) {
-        send(ws, EVENT.ERROR, { code: 'NOT_READY', message: 'both players must be ready' });
+
+      const connectedSlots = listConnectedSlots(room);
+      if (connectedSlots.length < MIN_START_PLAYERS) {
+        send(ws, EVENT.ERROR, { code: 'NOT_ENOUGH_PLAYERS', message: 'at least 2 connected players required' });
         return;
       }
+
+      const allReady = connectedSlots.every((slot) => room.players[slot]?.ready);
+      if (!allReady) {
+        send(ws, EVENT.ERROR, { code: 'NOT_READY', message: 'all connected players must be ready' });
+        return;
+      }
+
       room.started = true;
-      room.game = {
-        phase: 'playing',
-        lives: START_LIVES,
-        board: createBoard({ size: 16, mines: 40 }),
-        startedAt: Date.now(),
-        players: {
-          host: makeInitialPlayerState(),
-          guest: makeInitialPlayerState()
-        }
-      };
+      initGameForRoom(room);
       broadcastGameState(room);
       return;
     }
@@ -363,39 +475,68 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
         return;
       }
+
       const client = clients.get(ws);
       if (!client?.roomCode || !client.slot) {
         send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
         return;
       }
+
       const room = rooms.get(client.roomCode);
       if (!room) {
         send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
         return;
       }
-      if (client.slot !== 'host') {
+
+      if (client.slot !== HOST_SLOT) {
         send(ws, EVENT.ERROR, { code: 'HOST_ONLY', message: 'only host can restart game' });
         return;
       }
-      if (!room.host || !room.guest) {
-        send(ws, EVENT.ERROR, { code: 'NOT_ENOUGH_PLAYERS', message: 'both players must be in room' });
+
+      const participantSlots = listReconnectableSlots(room);
+      if (participantSlots.length === 0) {
+        send(ws, EVENT.ERROR, { code: 'NOT_ENOUGH_PLAYERS', message: 'at least 1 player required' });
         return;
       }
-      room.started = true;
-      room.host.ready = false;
-      room.guest.ready = false;
-      room.game = {
-        phase: 'playing',
-        lives: START_LIVES,
-        board: createBoard({ size: 16, mines: 40 }),
-        startedAt: Date.now(),
-        players: {
-          host: makeInitialPlayerState(),
-          guest: makeInitialPlayerState()
+
+      for (const slot of ROOM_SLOTS) {
+        if (room.players[slot]) {
+          room.players[slot].ready = false;
         }
-      };
+      }
+      room.started = true;
+      initGameForRoom(room);
       broadcastRoomState(room.code);
       broadcastGameState(room);
+      return;
+    }
+
+    if (type === EVENT.PLAYER_MOVE) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+
+      const client = clients.get(ws);
+      if (!client?.roomCode || !client.slot) {
+        send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
+        return;
+      }
+
+      const room = rooms.get(client.roomCode);
+      if (!room) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
+        return;
+      }
+
+      room.positions[client.slot] = {
+        x: checked.data.x,
+        z: checked.data.z,
+        yaw: checked.data.yaw,
+        at: Date.now()
+      };
+      broadcastPlayerPos(room, client.slot);
       return;
     }
 
@@ -405,6 +546,7 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
         return;
       }
+
       const client = clients.get(ws);
       if (!client?.roomCode || !client.slot) {
         send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
@@ -415,8 +557,15 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'GAME_NOT_ACTIVE', message: 'game is not active' });
         return;
       }
+
+      const actorState = room.game.players[client.slot];
+      if (!actorState) {
+        send(ws, EVENT.ERROR, { code: 'PLAYER_NOT_ACTIVE', message: 'slot is not in active participants' });
+        return;
+      }
+
       const now = Date.now();
-      if (room.game.players[client.slot].deadUntil > now) {
+      if (actorState.deadUntil > now) {
         send(ws, EVENT.ERROR, { code: 'DEAD_LOCK', message: 'player is waiting for respawn' });
         return;
       }
@@ -426,6 +575,7 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'FLAG_REJECTED', message: result.reason });
         return;
       }
+
       broadcastGamePatch(room, client.slot, [
         {
           type: 'cell',
@@ -443,6 +593,7 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
         return;
       }
+
       const client = clients.get(ws);
       if (!client?.roomCode || !client.slot) {
         send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
@@ -453,8 +604,14 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'GAME_NOT_ACTIVE', message: 'game is not active' });
         return;
       }
-      const now = Date.now();
+
       const actorState = room.game.players[client.slot];
+      if (!actorState) {
+        send(ws, EVENT.ERROR, { code: 'PLAYER_NOT_ACTIVE', message: 'slot is not in active participants' });
+        return;
+      }
+
+      const now = Date.now();
       if (actorState.deadUntil > now) {
         send(ws, EVENT.ERROR, { code: 'DEAD_LOCK', message: 'player is waiting for respawn' });
         return;
@@ -485,17 +642,10 @@ wss.on('connection', (ws) => {
         room.game.lives -= 1;
         actorState.explosions += 1;
         actorState.deadUntil = now + RESPAWN_MS;
-        changes.push({
-          type: 'player',
-          slot: client.slot,
-          deadUntil: actorState.deadUntil
-        });
+        changes.push({ type: 'player', slot: client.slot, deadUntil: actorState.deadUntil });
       }
 
-      if (result.won) {
-        room.game.phase = 'result';
-      }
-      if (room.game.lives <= 0) {
+      if (result.won || room.game.lives <= 0) {
         room.game.phase = 'result';
       }
 
@@ -513,6 +663,7 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
         return;
       }
+
       const client = clients.get(ws);
       if (!client?.roomCode || !client.slot) {
         send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
@@ -523,15 +674,17 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
         return;
       }
+
       const chatPayload = {
         from: client.slot,
         nickname: client.nickname,
         text: checked.data.text,
         at: Date.now()
       };
-      for (const slot of ['host', 'guest']) {
-        const player = room[slot];
-        if (player?.ws && player.ws.readyState === 1) {
+
+      for (const slot of ROOM_SLOTS) {
+        const player = room.players[slot];
+        if (isPlayerConnected(player)) {
           send(player.ws, EVENT.CHAT_MESSAGE, chatPayload);
         }
       }

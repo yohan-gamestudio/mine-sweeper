@@ -40,15 +40,15 @@ Reference: `PRD.md`
 ## 2. Room Lobby (Ready/Start)
 
 ### Purpose
-- Coordinate both players before game start.
+- Coordinate 2 to 4 players before game start.
 
 ### Requirements
-- Display 2 player slots.
+- Display up to 4 player slots.
 - Show nickname and connection/ready state per player.
 - Show room code.
 - Local `Ready/Unready` toggle.
 - Host-only `Start` button.
-- `Start` enabled only when both players are ready.
+- `Start` enabled only when all connected players are ready and connected player count is at least 2.
 - `Leave Room` action.
 - Lock nickname after game start.
 
@@ -56,13 +56,9 @@ Reference: `PRD.md`
 ```txt
 상단 바: 방 코드 [1234]   연결상태 [정상]
 
-플레이어 슬롯 A
-- 닉네임: host_name
-- 상태: 접속중 / 레디
-
-플레이어 슬롯 B
-- 닉네임: guest_name
-- 상태: 접속중 / 미레디
+플레이어 슬롯 A~D
+- 닉네임: player_name
+- 상태: 접속중 / 레디 / 재접속대기
 
 [ 레디 / 레디 해제 ]   (본인 버튼)
 [ 시작 ]               (방장만 활성, 양쪽 레디 시 활성)

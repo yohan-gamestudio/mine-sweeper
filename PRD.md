@@ -1,7 +1,7 @@
 # 3D Co-op Minesweeper PRD (MVP)
 
 ## 1. Product Goal
-- Build a 2-player cooperative game with Minecraft-like first-person movement in a 3D world.
+- Build a cooperative game for 2 to 4 players with Minecraft-like first-person movement in a 3D world.
 - Keep minesweeper logic on a 2D grid.
 - Focus on calm puzzle collaboration with light movement risk.
 
@@ -13,7 +13,7 @@
 
 ## 3. Platform and Session
 - Multiplayer only, room-based.
-- Max players per room: 2.
+- Max players per room: 4.
 - Room join method: 4-digit numeric code.
 - Code generation policy: regenerate on collision.
 - Single server region.
@@ -22,7 +22,7 @@
 - Nickname length: 2 to 12 characters.
 - Duplicate nicknames allowed.
 - Nickname can be changed in lobby, locked after game start.
-- Both players must press Ready before match start.
+- All connected players must press Ready before match start (minimum 2 players).
 - Host permissions: start/restart only.
 
 ## 5. Gameplay Rules

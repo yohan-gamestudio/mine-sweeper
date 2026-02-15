@@ -132,6 +132,13 @@ body {
   font-size: 14px;
 }
 
+#lobby-player-list {
+  margin: 8px 0 10px;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
 #entry-card input,
 #lobby-card input {
   border: 1px solid rgba(255, 255, 255, 0.35);

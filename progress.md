@@ -300,3 +300,45 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - server/client dev boot + curl checks:
     - `http://127.0.0.1:3000/health` (OK)
     - `http://127.0.0.1:5173` (HTTP 200)
+
+## Progress Update 24 (4-player expansion + remaining feature completion)
+- Clarified PRD mismatch and migrated implementation from fixed 2-slot (`host/guest`) to 4-slot room model (`p1..p4`).
+- Shared protocol updates:
+  - added `player:move` (client intent), `player:pos` (server broadcast)
+  - updated room/game payload docs for dynamic `players[]` and per-slot maps
+- Server (`server/index.mjs`) refactor:
+  - dynamic slots up to 4 players, host slot `p1`
+  - room state payload now includes `hostSlot`, `youSlot`, `players[]`
+  - start gate: at least 2 connected players + all connected players ready
+  - authoritative restart adapted to dynamic participants
+  - dynamic reconnect/timeout cleanup for any slot
+  - added position relay (`player:move` -> `player:pos`)
+- Client (`main.js`) refactor/features:
+  - lobby UI switched to dynamic 4-slot player list
+  - room/game state handling switched to dynamic players by slot
+  - remote teammate sync implemented for up to 3 peers (world avatars + map markers)
+  - local player collision against remote peers (no push)
+  - movement position sync to server at fixed interval
+  - implemented audio cues: explosion, flag toggle, jump, footsteps
+- Visual/style update:
+  - added `#lobby-player-list` styling in `style.css`
+- Docs update:
+  - `PRD.md` updated to 2~4 player requirement
+  - `SCREEN_SPEC.md` updated to 4-player lobby requirements
+- Added/updated smoke tests:
+  - new `scripts/ws_four_player_room_smoke.mjs` (4 players join + 5th rejected)
+  - stabilized websocket smoke tests by converting flaky flows to queue-based message matching
+- Verification:
+  - Build: `npm run build` passed.
+  - WS smoke pass set:
+    - `ws_room_smoke`
+    - `ws_four_player_room_smoke`
+    - `ws_ready_start_smoke`
+    - `ws_patch_consistency_smoke`
+    - `ws_life_respawn_smoke`
+    - `ws_chat_smoke`
+    - `ws_reconnect_smoke`
+    - `ws_restart_smoke`
+    - `ws_solo_timeout_smoke`
+  - Playwright scenario pack:
+    - `scripts/playwright_smoke_scenarios.sh` => pass

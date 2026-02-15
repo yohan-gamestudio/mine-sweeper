@@ -12,7 +12,7 @@ Checked at: 2026-02-16
 
 ## 2) Room/Lobby Rules
 - [x] Room create/join with 4-digit code.
-- [x] Max 2 players per room.
+- [x] Max 4 players per room.
 - [x] Ready/Unready state per player.
 - [x] Host-only start gate.
 - [x] Duplicate nickname allowed.
@@ -51,14 +51,16 @@ Checked at: 2026-02-16
 - [x] Map shows opened/flagged/exploded marks and local position.
 
 ## 7) Known Gaps (Not Fully PRD-complete)
-- [ ] Teammate position sync in world/map is still placeholder on client.
-- [ ] Player-player collision (with no push) is not implemented.
-- [ ] Audio set (explosion/flag/footstep/jump) is not implemented.
+- [x] Teammate position sync in world/map implemented.
+- [x] Player-player collision (with no push) implemented.
+- [x] Audio set (explosion/flag/footstep/jump) implemented.
+- [ ] Reconnect identity is nickname-based; duplicate nickname reconnect can be ambiguous.
 
 ## 8) Verification Artifacts
 - Backend smoke scripts:
   - `scripts/ws_room_smoke.mjs`
   - `scripts/ws_ready_start_smoke.mjs`
+  - `scripts/ws_four_player_room_smoke.mjs`
   - `scripts/ws_patch_consistency_smoke.mjs`
   - `scripts/ws_life_respawn_smoke.mjs`
   - `scripts/ws_chat_smoke.mjs`

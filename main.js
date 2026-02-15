@@ -16,6 +16,11 @@ const JUMP_VELOCITY = 6;
 const GRAVITY = 20;
 const PROTOCOL_EVENT_COUNT = Object.keys(EVENT).length;
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:3000/ws`;
+const ROOM_SLOTS = ['p1', 'p2', 'p3', 'p4'];
+const HOST_SLOT = ROOM_SLOTS[0];
+const PLAYER_COLLISION_RADIUS = 0.7;
+const MOVE_SYNC_MS = 110;
+const FOOTSTEP_INTERVAL_MS = 360;
 
 const app = document.querySelector('#app');
 app.innerHTML = `
@@ -50,8 +55,7 @@ app.innerHTML = `
     <div id="lobby-card" class="hidden">
       <h1>Room Lobby</h1>
       <p>Room Code: <strong id="lobby-room-code">----</strong></p>
-      <p>Host: <span id="lobby-host-name">-</span> (<span id="lobby-host-ready">Not Ready</span>)</p>
-      <p>Guest: <span id="lobby-guest-name">Teammate</span> (<span id="lobby-guest-ready">Ready</span>)</p>
+      <div id="lobby-player-list"></div>
       <p>
         <button id="btn-ready">Ready</button>
         <button id="btn-start" disabled>Start</button>
@@ -86,10 +90,7 @@ const nicknameInput = document.querySelector('#nickname-input');
 const joinCodeInput = document.querySelector('#join-code-input');
 const entryError = document.querySelector('#entry-error');
 const lobbyRoomCode = document.querySelector('#lobby-room-code');
-const lobbyHostName = document.querySelector('#lobby-host-name');
-const lobbyHostReady = document.querySelector('#lobby-host-ready');
-const lobbyGuestName = document.querySelector('#lobby-guest-name');
-const lobbyGuestReady = document.querySelector('#lobby-guest-ready');
+const lobbyPlayerList = document.querySelector('#lobby-player-list');
 const btnCreate = document.querySelector('#btn-create');
 const btnJoin = document.querySelector('#btn-join');
 const btnReady = document.querySelector('#btn-ready');
@@ -179,7 +180,7 @@ function makeNameSprite(text) {
   return sprite;
 }
 
-function createTeammateAvatar() {
+function createTeammateAvatar(name = 'Teammate') {
   const group = new THREE.Group();
 
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.46, 0.46), teammateSkinMaterial);
@@ -230,15 +231,13 @@ function createTeammateAvatar() {
   mouth.position.set(0, 1.62, -0.24);
   group.add(mouth);
 
-  const nameTag = makeNameSprite('Teammate');
+  const nameTag = makeNameSprite(name);
   nameTag.position.set(0, 2.2, 0);
   group.add(nameTag);
 
   return { group, nameTag, armLeft, armRight, legLeft, legRight };
 }
-
-const teammateAvatar = createTeammateAvatar();
-scene.add(teammateAvatar.group);
+const remoteAvatars = new Map();
 
 const state = {
   screen: 'entry',
@@ -264,21 +263,110 @@ const state = {
   nickname: 'Player1',
   roomCode: '----',
   localReady: false,
-  hostName: 'Host',
-  hostReady: false,
-  guestName: 'Guest',
-  guestReady: false,
-  mySlot: 'host',
+  players: [],
+  mySlot: HOST_SLOT,
   authoritative: false,
   chat: [],
-  teammatePos: new THREE.Vector2(1, 1),
+  remotePlayers: {},
   cells: [],
-  cellsFlat: []
+  cellsFlat: [],
+  lastMoveSyncAt: 0,
+  footstepAt: 0
 };
 
 let socket = null;
 let reconnectRetryAt = 0;
 const pendingSocketMessages = [];
+let audioCtx = null;
+
+function ensureAudioCtx() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+function playTone({ frequency, duration = 0.08, type = 'sine', gain = 0.035 }) {
+  const ctx = ensureAudioCtx();
+  const osc = ctx.createOscillator();
+  const vol = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = frequency;
+  vol.gain.value = gain;
+  osc.connect(vol);
+  vol.connect(ctx.destination);
+  const t0 = ctx.currentTime;
+  const t1 = t0 + duration;
+  vol.gain.setValueAtTime(gain, t0);
+  vol.gain.exponentialRampToValueAtTime(0.0001, t1);
+  osc.start(t0);
+  osc.stop(t1);
+}
+
+function playFlagSound(flagged) {
+  playTone({ frequency: flagged ? 780 : 520, duration: 0.06, type: 'square', gain: 0.02 });
+}
+
+function playExplosionSound() {
+  playTone({ frequency: 110, duration: 0.2, type: 'sawtooth', gain: 0.045 });
+}
+
+function playJumpSound() {
+  playTone({ frequency: 310, duration: 0.07, type: 'triangle', gain: 0.018 });
+}
+
+function playFootstepSound() {
+  playTone({ frequency: 180, duration: 0.04, type: 'square', gain: 0.012 });
+}
+
+function getMyPlayer() {
+  return state.players.find((p) => p.slot === state.mySlot);
+}
+
+function upsertRemoteAvatar(slot, name) {
+  let avatar = remoteAvatars.get(slot);
+  if (!avatar) {
+    avatar = createTeammateAvatar(name);
+    avatar.displayName = name;
+    scene.add(avatar.group);
+    remoteAvatars.set(slot, avatar);
+    return avatar;
+  }
+  if (avatar.displayName !== name) {
+    avatar.displayName = name;
+    avatar.nameTag.material.map.dispose?.();
+    avatar.nameTag.material.dispose?.();
+    avatar.nameTag.parent.remove(avatar.nameTag);
+    avatar.nameTag = makeNameSprite(name);
+    avatar.nameTag.position.set(0, 2.2, 0);
+    avatar.group.add(avatar.nameTag);
+  }
+  return avatar;
+}
+
+function syncRemoteAvatarsFromState() {
+  const activeSlots = new Set(
+    state.players.filter((p) => p.slot !== state.mySlot && p.connected && p.name && p.name !== '-').map((p) => p.slot)
+  );
+  for (const [slot, avatar] of remoteAvatars.entries()) {
+    if (!activeSlots.has(slot)) {
+      scene.remove(avatar.group);
+      remoteAvatars.delete(slot);
+      delete state.remotePlayers[slot];
+    }
+  }
+  for (const p of state.players) {
+    if (p.slot === state.mySlot || p.name === '-') continue;
+    upsertRemoteAvatar(p.slot, p.name);
+    if (!state.remotePlayers[p.slot]) {
+      const spawn = worldFromCell(Math.floor(GRID_SIZE / 2), Math.floor(GRID_SIZE / 2));
+      state.remotePlayers[p.slot] = { x: spawn.x, z: spawn.z, yaw: 0, at: Date.now() };
+    }
+  }
+}
 
 function setConnState(next) {
   state.connState = next;
@@ -323,17 +411,10 @@ function connectSocket(force = false) {
     const payload = msg?.payload ?? {};
     if (type === EVENT.ROOM_STATE) {
       state.roomCode = payload.roomCode ?? state.roomCode;
-      state.hostName = payload.host?.name ?? '-';
-      state.hostReady = Boolean(payload.host?.ready);
-      state.guestName = payload.guest?.name ?? '-';
-      state.guestReady = Boolean(payload.guest?.ready);
-      if (state.nickname === state.hostName) {
-        state.mySlot = 'host';
-        state.localReady = state.hostReady;
-      } else if (state.nickname === state.guestName) {
-        state.mySlot = 'guest';
-        state.localReady = state.guestReady;
-      }
+      state.players = Array.isArray(payload.players) ? payload.players : [];
+      state.mySlot = payload.youSlot || state.mySlot;
+      state.localReady = Boolean(getMyPlayer()?.ready);
+      syncRemoteAvatarsFromState();
       renderScreenState();
       return;
     }
@@ -348,6 +429,17 @@ function connectSocket(force = false) {
     }
     if (type === EVENT.GAME_PATCH) {
       applyServerGamePatch(payload);
+      return;
+    }
+    if (type === EVENT.PLAYER_POS) {
+      if (payload.slot && payload.slot !== state.mySlot) {
+        state.remotePlayers[payload.slot] = {
+          x: payload.x,
+          z: payload.z,
+          yaw: payload.yaw,
+          at: payload.at ?? Date.now()
+        };
+      }
       return;
     }
     if (type === EVENT.GAME_RESULT) {
@@ -523,7 +615,7 @@ function resetGame() {
   state.totalSafe = GRID_SIZE * GRID_SIZE - MINE_COUNT;
   state.startTimeMs = performance.now();
   state.elapsedMs = 0;
-  state.teammatePos.set(Math.floor(GRID_SIZE / 2), Math.floor(GRID_SIZE / 2) - 2);
+  state.footstepAt = 0;
 
   buildBoard();
 
@@ -576,12 +668,18 @@ function renderScreenState() {
   resultCard.classList.toggle('hidden', state.screen !== 'result');
 
   lobbyRoomCode.textContent = state.roomCode;
-  lobbyHostName.textContent = state.hostName;
-  lobbyHostReady.textContent = state.hostReady ? 'Ready' : 'Not Ready';
-  lobbyGuestName.textContent = state.guestName;
-  lobbyGuestReady.textContent = state.guestReady ? 'Ready' : 'Not Ready';
+  lobbyPlayerList.innerHTML = (state.players.length ? state.players : ROOM_SLOTS.map((slot) => ({ slot, name: '-', ready: false, connected: false })))
+    .map(
+      (p) =>
+        `<div>${p.slot === HOST_SLOT ? 'Host' : 'Player'} ${p.slot}: ${p.name} (${p.ready ? 'Ready' : 'Not Ready'}${
+          p.connected ? '' : ', Disconnected'
+        })</div>`
+    )
+    .join('');
   btnReady.textContent = state.localReady ? 'Unready' : 'Ready';
-  btnStart.disabled = !state.localReady;
+  const connectedCount = state.players.filter((p) => p.connected && p.name !== '-').length;
+  const amHost = state.mySlot === HOST_SLOT;
+  btnStart.disabled = !amHost || connectedCount < 2;
   chatPanel.classList.toggle('hidden', state.screen !== 'playing');
 }
 
@@ -653,6 +751,7 @@ function applyServerCellPatch(patch) {
 function applyServerSnapshot(payload) {
   if (!payload) return;
   state.authoritative = true;
+  if (payload.youSlot) state.mySlot = payload.youSlot;
   state.mode = payload.phase === 'playing' ? 'playing' : state.mode;
   if (typeof payload.lives === 'number') state.lives = payload.lives;
   if (Array.isArray(payload.cells)) {
@@ -661,6 +760,17 @@ function applyServerSnapshot(payload) {
       for (const c of row) {
         applyServerCellPatch(c);
       }
+    }
+  }
+  if (payload.positions && typeof payload.positions === 'object') {
+    for (const [slot, pos] of Object.entries(payload.positions)) {
+      if (slot === state.mySlot) continue;
+      state.remotePlayers[slot] = {
+        x: pos.x,
+        z: pos.z,
+        yaw: pos.yaw ?? 0,
+        at: pos.at ?? Date.now()
+      };
     }
   }
   const myPlayer = payload.players?.[state.mySlot];
@@ -672,20 +782,40 @@ function applyServerSnapshot(payload) {
     state.dead = false;
     state.deadLeft = 0;
   }
+  syncRemoteAvatarsFromState();
+  state.lastMoveSyncAt = 0;
 }
 
 function applyServerGamePatch(payload) {
   if (!payload) return;
   if (typeof payload.lives === 'number') state.lives = payload.lives;
+  const myState = payload.players?.[state.mySlot];
+  if (myState?.deadUntil && myState.deadUntil > Date.now()) {
+    state.dead = true;
+    state.deadLeft = (myState.deadUntil - Date.now()) / 1000;
+    state.deadPos.copy(camera.position);
+  }
   if (Array.isArray(payload.changes)) {
     for (const change of payload.changes) {
       if (change.type === 'cell') {
         applyServerCellPatch(change);
       }
+      if (change.type === 'position' && change.slot !== state.mySlot) {
+        state.remotePlayers[change.slot] = {
+          x: change.x,
+          z: change.z,
+          yaw: change.yaw ?? 0,
+          at: Date.now()
+        };
+      }
       if (change.type === 'player' && change.slot === state.mySlot && change.deadUntil > Date.now()) {
         state.dead = true;
         state.deadLeft = (change.deadUntil - Date.now()) / 1000;
         state.deadPos.copy(camera.position);
+        playExplosionSound();
+      }
+      if (change.type === 'cell' && typeof change.flagged === 'boolean') {
+        playFlagSound(change.flagged);
       }
     }
   }
@@ -714,6 +844,7 @@ function openCell(cell) {
     cell.exploded = true;
     applyCellVisual(cell);
     addExplosionBurst(cell);
+    playExplosionSound();
     state.lives -= 1;
     state.dead = true;
     state.deadLeft = RESPAWN_SECONDS;
@@ -755,6 +886,7 @@ function toggleFlag(cell) {
   if (!canInteractCell(cell)) return;
   cell.flagged = !cell.flagged;
   applyCellVisual(cell);
+  playFlagSound(cell.flagged);
 }
 
 function getFeetCell() {
@@ -783,10 +915,6 @@ function holdMap(open) {
   setPointerLockText();
 }
 
-function randomRoomCode() {
-  return String(Math.floor(Math.random() * 10000)).padStart(4, '0');
-}
-
 function validNickname(value) {
   const name = value.trim();
   return name.length >= 2 && name.length <= 12;
@@ -804,10 +932,8 @@ function enterLobbyWithRoom(roomCode) {
   connectSocket();
   state.roomCode = roomCode;
   state.localReady = false;
-  state.hostName = '-';
-  state.hostReady = false;
-  state.guestName = '-';
-  state.guestReady = false;
+  state.players = [];
+  state.remotePlayers = {};
   state.screen = 'lobby';
   entryError.textContent = '';
   localStorage.setItem('ms_nickname', state.nickname);
@@ -829,6 +955,7 @@ function sendLocalIntent(type, payload) {
 
 function onMouseDown(event) {
   if (state.screen !== 'playing') return;
+  ensureAudioCtx();
 
   if (state.mode === 'won' || state.mode === 'lost') {
     return;
@@ -918,6 +1045,12 @@ btnLeave.addEventListener('click', () => {
   state.localReady = false;
   state.mode = 'paused';
   state.mapOpen = false;
+  state.players = [];
+  state.remotePlayers = {};
+  for (const avatar of remoteAvatars.values()) {
+    scene.remove(avatar.group);
+  }
+  remoteAvatars.clear();
   mapWrap.classList.add('hidden');
   document.exitPointerLock?.();
   nicknameInput.value = state.nickname;
@@ -1102,15 +1235,14 @@ function drawMap() {
   }
 
   mapCtx.fillStyle = '#62dd88';
-  mapCtx.beginPath();
-  mapCtx.arc(
-    ox + (state.teammatePos.x + 0.5) * cellPx,
-    oy + (state.teammatePos.y + 0.5) * cellPx,
-    cellPx * 0.2,
-    0,
-    Math.PI * 2
-  );
-  mapCtx.fill();
+  for (const [slot, pos] of Object.entries(state.remotePlayers)) {
+    if (!slot || !pos) continue;
+    const cell = cellFromWorld(pos.x, pos.z);
+    if (!cell) continue;
+    mapCtx.beginPath();
+    mapCtx.arc(ox + (cell.x + 0.5) * cellPx, oy + (cell.y + 0.5) * cellPx, cellPx * 0.2, 0, Math.PI * 2);
+    mapCtx.fill();
+  }
 }
 
 function updateMovement(dt) {
@@ -1132,10 +1264,26 @@ function updateMovement(dt) {
   if (keys.has('KeyD')) moveDir.add(right);
   if (keys.has('KeyA')) moveDir.sub(right);
 
+  let moved = false;
   if (moveDir.lengthSq() > 0) {
     moveDir.normalize();
     const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? SPRINT_SPEED : WALK_SPEED;
-    camera.position.addScaledVector(moveDir, speed * dt);
+    const candidate = camera.position.clone().addScaledVector(moveDir, speed * dt);
+    let blockedByPeer = false;
+    for (const pos of Object.values(state.remotePlayers)) {
+      if (!pos) continue;
+      const dx = candidate.x - pos.x;
+      const dz = candidate.z - pos.z;
+      const minDist = PLAYER_COLLISION_RADIUS * 2;
+      if (dx * dx + dz * dz < minDist * minDist) {
+        blockedByPeer = true;
+        break;
+      }
+    }
+    if (!blockedByPeer) {
+      camera.position.copy(candidate);
+      moved = true;
+    }
   }
 
   if (camera.position.y <= PLAYER_HEIGHT + 0.001) {
@@ -1143,6 +1291,7 @@ function updateMovement(dt) {
     state.velocityY = Math.max(0, state.velocityY);
     if (keys.has('Space')) {
       state.velocityY = JUMP_VELOCITY;
+      playJumpSound();
     }
   }
 
@@ -1155,6 +1304,25 @@ function updateMovement(dt) {
 
   camera.position.x = Math.max(boardMin + 0.5, Math.min(boardMax - 0.5, camera.position.x));
   camera.position.z = Math.max(boardMin + 0.5, Math.min(boardMax - 0.5, camera.position.z));
+
+  if (moved && camera.position.y <= PLAYER_HEIGHT + 0.02) {
+    const now = performance.now();
+    if (now - state.footstepAt >= FOOTSTEP_INTERVAL_MS) {
+      playFootstepSound();
+      state.footstepAt = now;
+    }
+  }
+
+  if (state.authoritative) {
+    const now = performance.now();
+    if (now - state.lastMoveSyncAt >= MOVE_SYNC_MS) {
+      const intent = sendLocalIntent(EVENT.PLAYER_MOVE, { x: camera.position.x, z: camera.position.z, yaw: state.yaw });
+      if (intent) {
+        sendSocketEvent(EVENT.PLAYER_MOVE, intent);
+      }
+      state.lastMoveSyncAt = now;
+    }
+  }
 }
 
 function updateDead(dt) {
@@ -1188,23 +1356,19 @@ function updateFx(dt) {
   }
 }
 
-function updateTeammateAvatar(dt) {
-  // Placeholder for remote interpolation: keep avatar synced to teammatePos cell.
-  const p = worldFromCell(state.teammatePos.x, state.teammatePos.y);
-  teammateAvatar.group.position.set(p.x, 0, p.z);
-
-  // Keep feet grounded; only use a subtle limb idle so the avatar feels alive.
-  const t = state.elapsedMs / 1000;
-  const swing = Math.sin(t * 3.5) * 0.06;
-  teammateAvatar.legLeft.rotation.x = swing;
-  teammateAvatar.legRight.rotation.x = -swing;
-  teammateAvatar.armLeft.rotation.x = -swing * 0.9;
-  teammateAvatar.armRight.rotation.x = swing * 0.9;
-
-  // Model front is -Z, so add PI after deriving look yaw.
-  const yawToCamera = Math.atan2(camera.position.x - p.x, camera.position.z - p.z);
-  teammateAvatar.group.rotation.y = yawToCamera + Math.PI;
-  teammateAvatar.nameTag.quaternion.copy(camera.quaternion);
+function updateRemoteAvatars() {
+  for (const [slot, avatar] of remoteAvatars.entries()) {
+    const pos = state.remotePlayers[slot];
+    if (!pos) continue;
+    avatar.group.position.set(pos.x, 0, pos.z);
+    const swing = Math.sin((state.elapsedMs / 1000) * 3.5 + ROOM_SLOTS.indexOf(slot)) * 0.06;
+    avatar.legLeft.rotation.x = swing;
+    avatar.legRight.rotation.x = -swing;
+    avatar.armLeft.rotation.x = -swing * 0.9;
+    avatar.armRight.rotation.x = swing * 0.9;
+    avatar.group.rotation.y = (pos.yaw ?? 0) + Math.PI;
+    avatar.nameTag.quaternion.copy(camera.quaternion);
+  }
 }
 
 function step(dt) {
@@ -1229,7 +1393,7 @@ function step(dt) {
   updateDead(dt);
   updateMovement(dt);
   updateFx(dt);
-  updateTeammateAvatar(dt);
+  updateRemoteAvatars();
 
   camera.rotation.order = 'YXZ';
   camera.rotation.y = state.yaw;
@@ -1300,11 +1464,10 @@ window.render_game_to_text = () => {
       exploded,
       remaining_safe: state.totalSafe - openedSafe
     },
-    teammate: {
-      name: 'Teammate',
-      cell_x: Number(state.teammatePos.x.toFixed(2)),
-      cell_y: Number(state.teammatePos.y.toFixed(2))
-    }
+    teammates: Object.entries(state.remotePlayers).map(([slot, pos]) => ({
+      slot,
+      cell: cellFromWorld(pos.x, pos.z)
+    }))
   };
   return JSON.stringify(payload);
 };

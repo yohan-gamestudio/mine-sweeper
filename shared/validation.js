@@ -19,6 +19,11 @@ export const clientPayloadSchemas = Object.freeze({
   [EVENT.PLAYER_READY]: z.object({
     ready: z.boolean()
   }),
+  [EVENT.PLAYER_MOVE]: z.object({
+    x: z.number().finite(),
+    z: z.number().finite(),
+    yaw: z.number().finite()
+  }),
   [EVENT.GAME_START]: z.object({}),
   [EVENT.GAME_RESTART]: z.object({}),
   [EVENT.CELL_OPEN]: cellCoordSchema,
