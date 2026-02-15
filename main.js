@@ -938,8 +938,11 @@ btnLeave.addEventListener('click', () => {
 btnResultRestart.addEventListener('click', () => {
   const intent = sendLocalIntent(EVENT.GAME_RESTART, {});
   if (!intent) return;
-  sendSocketEvent(EVENT.GAME_RESTART, intent);
-  startLocalMatch();
+  if (state.authoritative) {
+    sendSocketEvent(EVENT.GAME_RESTART, intent);
+  } else {
+    startLocalMatch();
+  }
 });
 
 btnResultLobby.addEventListener('click', () => {
@@ -980,7 +983,13 @@ window.addEventListener('resize', () => {
 });
 window.addEventListener('keydown', (e) => {
   if (state.screen === 'result' && e.code === 'KeyR') {
-    startLocalMatch();
+    const intent = sendLocalIntent(EVENT.GAME_RESTART, {});
+    if (!intent) return;
+    if (state.authoritative) {
+      sendSocketEvent(EVENT.GAME_RESTART, intent);
+    } else {
+      startLocalMatch();
+    }
     return;
   }
   if (state.screen !== 'playing') return;

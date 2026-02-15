@@ -357,6 +357,48 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (type === EVENT.GAME_RESTART) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+      const client = clients.get(ws);
+      if (!client?.roomCode || !client.slot) {
+        send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
+        return;
+      }
+      const room = rooms.get(client.roomCode);
+      if (!room) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
+        return;
+      }
+      if (client.slot !== 'host') {
+        send(ws, EVENT.ERROR, { code: 'HOST_ONLY', message: 'only host can restart game' });
+        return;
+      }
+      if (!room.host || !room.guest) {
+        send(ws, EVENT.ERROR, { code: 'NOT_ENOUGH_PLAYERS', message: 'both players must be in room' });
+        return;
+      }
+      room.started = true;
+      room.host.ready = false;
+      room.guest.ready = false;
+      room.game = {
+        phase: 'playing',
+        lives: START_LIVES,
+        board: createBoard({ size: 16, mines: 40 }),
+        startedAt: Date.now(),
+        players: {
+          host: makeInitialPlayerState(),
+          guest: makeInitialPlayerState()
+        }
+      };
+      broadcastRoomState(room.code);
+      broadcastGameState(room);
+      return;
+    }
+
     if (type === EVENT.CELL_FLAG) {
       const checked = validateClientEvent(type, payload);
       if (!checked.ok) {

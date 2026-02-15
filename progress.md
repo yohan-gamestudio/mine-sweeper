@@ -256,3 +256,16 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_solo_timeout_smoke.mjs` => `ws_solo_timeout_smoke:ok room=...`.
   - Regression: `node scripts/ws_reconnect_smoke.mjs` => `ws_reconnect_smoke:ok room=...`.
   - Playwright CLI artifacts: `.playwright/snapshots/t6s3-entry.txt`, `.playwright/artifacts/t6s3-entry.png`.
+
+## Progress Update 20 (PRD Gap Fix: Authoritative Restart)
+- Added server-authoritative same-room restart flow:
+  - Server now handles `game:restart` (host-only).
+  - Restart resets lives/player states and regenerates board seed.
+  - Host/guest ready flags reset to `false` on restart and `room:state` is broadcast.
+- Updated client result restart behavior:
+  - In authoritative mode, restart now sends `game:restart` only (no local-only force reset).
+  - `R` hotkey in result follows the same authoritative restart path.
+- Added smoke test: `scripts/ws_restart_smoke.mjs`.
+- Verification:
+  - `node scripts/ws_restart_smoke.mjs` => `ws_restart_smoke:ok room=...`.
+  - Regression: chat/reconnect/solo-timeout smokes passed.
