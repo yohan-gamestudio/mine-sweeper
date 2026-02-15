@@ -93,10 +93,99 @@ const explodedMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, rough
 const mineCapMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4046, roughness: 0.68, metalness: 0.16 });
 const flagPoleMaterial = new THREE.MeshStandardMaterial({ color: 0xc7c7c7, roughness: 0.5 });
 const flagClothMaterial = new THREE.MeshStandardMaterial({ color: 0xe53737, roughness: 0.8 });
+const teammateShirtMaterial = new THREE.MeshStandardMaterial({ color: 0x4d86d6, roughness: 0.72 });
+const teammateSkinMaterial = new THREE.MeshStandardMaterial({ color: 0xf0d1ac, roughness: 0.76 });
+const teammatePantsMaterial = new THREE.MeshStandardMaterial({ color: 0x3f5f8f, roughness: 0.8 });
+const teammateShoeMaterial = new THREE.MeshStandardMaterial({ color: 0x252a31, roughness: 0.84 });
+const teammateHairMaterial = new THREE.MeshStandardMaterial({ color: 0x2f241c, roughness: 0.88 });
+const teammateFaceDetailMaterial = new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 0.7 });
 
 const raycaster = new THREE.Raycaster();
 const baseMeshes = [];
 const fxBursts = [];
+const upAxis = new THREE.Vector3(0, 1, 0);
+
+function makeNameSprite(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(9,12,18,0.72)';
+  ctx.fillRect(0, 8, 256, 48);
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.strokeRect(1, 9, 254, 46);
+  ctx.font = 'bold 28px "IBM Plex Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#f7fbff';
+  ctx.fillText(text, 128, 32);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+  sprite.scale.set(1.8, 0.45, 1);
+  return sprite;
+}
+
+function createTeammateAvatar() {
+  const group = new THREE.Group();
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.46, 0.46), teammateSkinMaterial);
+  head.position.y = 1.72;
+  group.add(head);
+
+  const hair = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.14, 0.48), teammateHairMaterial);
+  hair.position.set(0, 1.88, 0);
+  group.add(hair);
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.32), teammateShirtMaterial);
+  body.position.y = 1.2;
+  group.add(body);
+
+  const armLeft = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.62, 0.16), teammateShirtMaterial);
+  armLeft.position.set(-0.36, 1.22, 0);
+  group.add(armLeft);
+
+  const armRight = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.62, 0.16), teammateShirtMaterial);
+  armRight.position.set(0.36, 1.22, 0);
+  group.add(armRight);
+
+  const legLeft = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.68, 0.2), teammatePantsMaterial);
+  legLeft.position.set(-0.13, 0.7, 0);
+  group.add(legLeft);
+
+  const legRight = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.68, 0.2), teammatePantsMaterial);
+  legRight.position.set(0.13, 0.7, 0);
+  group.add(legRight);
+
+  const shoeLeft = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 0.28), teammateShoeMaterial);
+  shoeLeft.position.set(-0.13, 0.31, 0.02);
+  group.add(shoeLeft);
+
+  const shoeRight = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 0.28), teammateShoeMaterial);
+  shoeRight.position.set(0.13, 0.31, 0.02);
+  group.add(shoeRight);
+
+  const eyeLeft = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), teammateFaceDetailMaterial);
+  eyeLeft.position.set(-0.08, 1.74, -0.24);
+  group.add(eyeLeft);
+
+  const eyeRight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), teammateFaceDetailMaterial);
+  eyeRight.position.set(0.08, 1.74, -0.24);
+  group.add(eyeRight);
+
+  const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.025, 0.02), teammateFaceDetailMaterial);
+  mouth.position.set(0, 1.62, -0.24);
+  group.add(mouth);
+
+  const nameTag = makeNameSprite('Teammate');
+  nameTag.position.set(0, 2.2, 0);
+  group.add(nameTag);
+
+  return { group, nameTag, armLeft, armRight, legLeft, legRight };
+}
+
+const teammateAvatar = createTeammateAvatar();
+scene.add(teammateAvatar.group);
 
 const state = {
   mode: 'start',
@@ -237,7 +326,7 @@ function resetGame() {
   state.totalSafe = GRID_SIZE * GRID_SIZE - MINE_COUNT;
   state.startTimeMs = performance.now();
   state.elapsedMs = 0;
-  state.teammatePos.set(1, 1);
+  state.teammatePos.set(Math.floor(GRID_SIZE / 2), Math.floor(GRID_SIZE / 2) - 2);
 
   buildBoard();
 
@@ -632,6 +721,25 @@ function updateFx(dt) {
   }
 }
 
+function updateTeammateAvatar(dt) {
+  // Placeholder for remote interpolation: keep avatar synced to teammatePos cell.
+  const p = worldFromCell(state.teammatePos.x, state.teammatePos.y);
+  teammateAvatar.group.position.set(p.x, 0, p.z);
+
+  // Keep feet grounded; only use a subtle limb idle so the avatar feels alive.
+  const t = state.elapsedMs / 1000;
+  const swing = Math.sin(t * 3.5) * 0.06;
+  teammateAvatar.legLeft.rotation.x = swing;
+  teammateAvatar.legRight.rotation.x = -swing;
+  teammateAvatar.armLeft.rotation.x = -swing * 0.9;
+  teammateAvatar.armRight.rotation.x = swing * 0.9;
+
+  // Model front is -Z, so add PI after deriving look yaw.
+  const yawToCamera = Math.atan2(camera.position.x - p.x, camera.position.z - p.z);
+  teammateAvatar.group.rotation.y = yawToCamera + Math.PI;
+  teammateAvatar.nameTag.quaternion.copy(camera.quaternion);
+}
+
 function step(dt) {
   if (state.mode === 'playing') {
     state.elapsedMs += dt * 1000;
@@ -640,6 +748,7 @@ function step(dt) {
   updateDead(dt);
   updateMovement(dt);
   updateFx(dt);
+  updateTeammateAvatar(dt);
 
   camera.rotation.order = 'YXZ';
   camera.rotation.y = state.yaw;
@@ -708,6 +817,11 @@ window.render_game_to_text = () => {
       flagged,
       exploded,
       remaining_safe: state.totalSafe - openedSafe
+    },
+    teammate: {
+      name: 'Teammate',
+      cell_x: Number(state.teammatePos.x.toFixed(2)),
+      cell_y: Number(state.teammatePos.y.toFixed(2))
     }
   };
   return JSON.stringify(payload);
