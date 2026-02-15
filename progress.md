@@ -131,3 +131,14 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_room_smoke.mjs` => `ws_room_smoke:ok room=...`.
   - Playwright health snapshot: `.playwright/snapshots/t3s2-health.txt`.
   - Console errors: none (`.playwright-cli/console-2026-02-15T14-58-28-384Z.log`).
+
+## Progress Update 10 (Task 3 Step 3)
+- Implemented ready/start lifecycle on server:
+  - `player:ready` updates host/guest ready state and re-broadcasts `room:state`.
+  - `game:start` enforces host-only and both-ready precondition.
+  - On successful start, both players receive `game:state` with `phase: playing`.
+- Added smoke test script: `scripts/ws_ready_start_smoke.mjs`.
+- Verification:
+  - `node scripts/ws_ready_start_smoke.mjs` => `ws_ready_start_smoke:ok room=...`.
+  - Playwright health snapshot: `.playwright/snapshots/t3s3-health.txt`.
+  - Console errors: none (`.playwright-cli/console-2026-02-15T14-59-52-628Z.log`).

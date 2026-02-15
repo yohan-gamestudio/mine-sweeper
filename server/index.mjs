@@ -133,7 +133,8 @@ wss.on('connection', (ws) => {
       const room = {
         code,
         host: { ws, nickname: checked.data.nickname, ready: false },
-        guest: null
+        guest: null,
+        started: false
       };
       rooms.set(code, room);
       clients.set(ws, { roomCode: code, slot: 'host', nickname: checked.data.nickname });
@@ -161,6 +162,69 @@ wss.on('connection', (ws) => {
       room.guest = { ws, nickname: checked.data.nickname, ready: false };
       clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
       broadcastRoomState(room.code);
+      return;
+    }
+
+    if (type === EVENT.PLAYER_READY) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+
+      const client = clients.get(ws);
+      if (!client?.roomCode || !client.slot) {
+        send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
+        return;
+      }
+      const room = rooms.get(client.roomCode);
+      if (!room || !room[client.slot]) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
+        return;
+      }
+      room[client.slot].ready = checked.data.ready;
+      broadcastRoomState(room.code);
+      return;
+    }
+
+    if (type === EVENT.GAME_START) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+      const client = clients.get(ws);
+      if (!client?.roomCode || !client.slot) {
+        send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
+        return;
+      }
+      const room = rooms.get(client.roomCode);
+      if (!room) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room not found' });
+        return;
+      }
+      if (client.slot !== 'host') {
+        send(ws, EVENT.ERROR, { code: 'HOST_ONLY', message: 'only host can start game' });
+        return;
+      }
+      if (!room.host?.ready || !room.guest?.ready) {
+        send(ws, EVENT.ERROR, { code: 'NOT_READY', message: 'both players must be ready' });
+        return;
+      }
+      room.started = true;
+      const statePayload = {
+        phase: 'playing',
+        roomCode: room.code,
+        lives: 5,
+        gridSize: 16,
+        mineCount: 40
+      };
+      for (const slot of ['host', 'guest']) {
+        const player = room[slot];
+        if (player?.ws && player.ws.readyState === 1) {
+          send(player.ws, EVENT.GAME_STATE, statePayload);
+        }
+      }
       return;
     }
 
