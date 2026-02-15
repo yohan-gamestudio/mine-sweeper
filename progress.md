@@ -168,3 +168,13 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_life_respawn_smoke.mjs` passed (includes DEAD_LOCK expiry check).
   - Playwright health snapshot: `.playwright/snapshots/t4s2-health.txt`.
   - Console errors: none (`.playwright-cli/console-2026-02-15T15-03-30-062Z.log`).
+
+## Progress Update 13 (Task 4 Step 3)
+- Added/verified snapshot+patch broadcasting behavior:
+  - join during active game now receives full `game:state` snapshot.
+  - `cell:flag`/`cell:open` continue emitting `game:patch` deltas to both peers.
+- Added consistency smoke test: `scripts/ws_patch_consistency_smoke.mjs`.
+- Verification:
+  - `node scripts/ws_patch_consistency_smoke.mjs` => `ws_patch_consistency_smoke:ok room=...`.
+  - Playwright health snapshot: `.playwright/snapshots/t4s3-health.txt`.
+  - Console errors: none (`.playwright-cli/console-2026-02-15T15-04-54-443Z.log`).

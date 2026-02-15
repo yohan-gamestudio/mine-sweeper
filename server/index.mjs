@@ -228,6 +228,20 @@ wss.on('connection', (ws) => {
       room.guest = { ws, nickname: checked.data.nickname, ready: false };
       clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
       broadcastRoomState(room.code);
+      if (room.started && room.game) {
+        send(ws, EVENT.GAME_STATE, {
+          phase: room.game.phase,
+          roomCode: room.code,
+          lives: room.game.lives,
+          gridSize: room.game.board.size,
+          mineCount: room.game.board.mines,
+          cells: boardToPublicCells(room.game.board),
+          players: {
+            host: { deadUntil: room.game.players.host.deadUntil },
+            guest: { deadUntil: room.game.players.guest.deadUntil }
+          }
+        });
+      }
       return;
     }
 
