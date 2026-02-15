@@ -3,6 +3,7 @@ import { CLIENT_EVENTS, EVENT } from './protocol.js';
 
 const nicknameSchema = z.string().trim().min(2).max(12);
 const roomCodeSchema = z.string().regex(/^[0-9]{4}$/);
+const reconnectTokenSchema = z.string().trim().min(8).max(120);
 const cellCoordSchema = z.object({
   x: z.number().int().min(0),
   y: z.number().int().min(0)
@@ -14,7 +15,8 @@ export const clientPayloadSchemas = Object.freeze({
   }),
   [EVENT.ROOM_JOIN]: z.object({
     nickname: nicknameSchema,
-    roomCode: roomCodeSchema
+    roomCode: roomCodeSchema,
+    reconnectToken: reconnectTokenSchema.optional()
   }),
   [EVENT.PLAYER_READY]: z.object({
     ready: z.boolean()

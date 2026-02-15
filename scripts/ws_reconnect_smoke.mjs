@@ -52,7 +52,11 @@ const roomCode = created.payload.roomCode;
 let guest = await connect();
 await nextMsg(guest, (m) => m.type === 'server:hello');
 send(guest, EVENT.ROOM_JOIN, { nickname: 'Guesty', roomCode });
-await nextMsg(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty'));
+const joinedRoom = await nextMsg(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty'));
+const guestToken = joinedRoom.payload.youToken;
+if (!guestToken) {
+  throw new Error('missing reconnect token');
+}
 
 send(host, EVENT.PLAYER_READY, { ready: true });
 await nextMsg(host, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.slot === m.payload.youSlot && p.ready === true));
@@ -67,8 +71,11 @@ await nextMsg(host, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.som
 
 guest = await connect();
 await nextMsg(guest, (m) => m.type === 'server:hello');
-send(guest, EVENT.ROOM_JOIN, { nickname: 'Guesty', roomCode });
-const roomState = await nextMsg(guest, (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty' && p.connected === true));
+send(guest, EVENT.ROOM_JOIN, { nickname: 'Guesty', roomCode, reconnectToken: guestToken });
+const roomState = await nextMsg(
+  guest,
+  (m) => m.type === EVENT.ROOM_STATE && m.payload.players?.some((p) => p.name === 'Guesty' && p.connected === true)
+);
 if (!roomState.payload.players?.some((p) => p.name === 'Guesty')) {
   throw new Error('reconnect guest slot restore failed');
 }

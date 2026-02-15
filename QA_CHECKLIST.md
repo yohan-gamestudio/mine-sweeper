@@ -54,7 +54,7 @@ Checked at: 2026-02-16
 - [x] Teammate position sync in world/map implemented.
 - [x] Player-player collision (with no push) implemented.
 - [x] Audio set (explosion/flag/footstep/jump) implemented.
-- [ ] Reconnect identity is nickname-based; duplicate nickname reconnect can be ambiguous.
+- [x] Reconnect identity uses per-slot reconnect token (duplicate nicknames handled).
 
 ## 8) Verification Artifacts
 - Backend smoke scripts:

@@ -342,3 +342,23 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
     - `ws_solo_timeout_smoke`
   - Playwright scenario pack:
     - `scripts/playwright_smoke_scenarios.sh` => pass
+
+## Progress Update 25 (Reconnect token hardening)
+- Replaced nickname-only reconnect identity with per-slot reconnect token.
+- Server:
+  - generates `reconnectToken` per player slot on create/join
+  - includes `youToken` in `room:state`
+  - supports token-based slot reclaim on `room:join`
+  - guards ambiguous duplicate-nickname reconnect with `RECONNECT_TOKEN_REQUIRED`
+- Client:
+  - stores/reuses reconnect token by `(roomCode, nickname)`
+  - includes token in automatic/manual reconnect joins
+- Shared schema:
+  - `room:join` now allows optional `reconnectToken`
+  - `room:state` includes `youToken`
+- Added test: `scripts/ws_reconnect_token_guard_smoke.mjs`.
+- Verification:
+  - `npm run build` passed
+  - `node scripts/ws_reconnect_smoke.mjs` passed
+  - `node scripts/ws_reconnect_token_guard_smoke.mjs` passed
+  - `scripts/playwright_smoke_scenarios.sh` passed

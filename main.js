@@ -262,6 +262,7 @@ const state = {
   reconnectAt: 0,
   nickname: 'Player1',
   roomCode: '----',
+  reconnectToken: '',
   localReady: false,
   players: [],
   mySlot: HOST_SLOT,
@@ -324,6 +325,28 @@ function playFootstepSound() {
 
 function getMyPlayer() {
   return state.players.find((p) => p.slot === state.mySlot);
+}
+
+function reconnectTokenKey(roomCode = state.roomCode, nickname = state.nickname) {
+  if (!roomCode || !nickname || roomCode === '----') return '';
+  return `ms_reconnect_${roomCode}_${nickname}`;
+}
+
+function saveReconnectToken() {
+  const key = reconnectTokenKey();
+  if (!key || !state.reconnectToken) return;
+  localStorage.setItem(key, state.reconnectToken);
+}
+
+function loadReconnectToken(roomCode, nickname) {
+  const key = reconnectTokenKey(roomCode, nickname);
+  if (!key) return '';
+  return localStorage.getItem(key) || '';
+}
+
+function clearReconnectToken(roomCode = state.roomCode, nickname = state.nickname) {
+  const key = reconnectTokenKey(roomCode, nickname);
+  if (key) localStorage.removeItem(key);
 }
 
 function upsertRemoteAvatar(slot, name) {
@@ -395,7 +418,11 @@ function connectSocket(force = false) {
       socket.send(
         JSON.stringify({
           type: EVENT.ROOM_JOIN,
-          payload: { nickname: state.nickname, roomCode: state.roomCode }
+          payload: {
+            nickname: state.nickname,
+            roomCode: state.roomCode,
+            reconnectToken: state.reconnectToken || undefined
+          }
         })
       );
     }
@@ -411,6 +438,10 @@ function connectSocket(force = false) {
     const payload = msg?.payload ?? {};
     if (type === EVENT.ROOM_STATE) {
       state.roomCode = payload.roomCode ?? state.roomCode;
+      if (payload.youToken && typeof payload.youToken === 'string') {
+        state.reconnectToken = payload.youToken;
+        saveReconnectToken();
+      }
       state.players = Array.isArray(payload.players) ? payload.players : [];
       state.mySlot = payload.youSlot || state.mySlot;
       state.localReady = Boolean(getMyPlayer()?.ready);
@@ -931,6 +962,7 @@ function startLocalMatch() {
 function enterLobbyWithRoom(roomCode) {
   connectSocket();
   state.roomCode = roomCode;
+  state.reconnectToken = loadReconnectToken(roomCode, state.nickname);
   state.localReady = false;
   state.players = [];
   state.remotePlayers = {};
@@ -1020,7 +1052,12 @@ btnJoin.addEventListener('click', () => {
     return;
   }
   state.nickname = nickname;
-  const intent = sendLocalIntent(EVENT.ROOM_JOIN, { nickname, roomCode: code });
+  state.reconnectToken = loadReconnectToken(code, nickname);
+  const intent = sendLocalIntent(EVENT.ROOM_JOIN, {
+    nickname,
+    roomCode: code,
+    reconnectToken: state.reconnectToken || undefined
+  });
   if (!intent) return;
   enterLobbyWithRoom(code);
   sendSocketEvent(EVENT.ROOM_JOIN, intent);
@@ -1041,6 +1078,7 @@ btnStart.addEventListener('click', () => {
 });
 
 btnLeave.addEventListener('click', () => {
+  clearReconnectToken();
   state.screen = 'entry';
   state.localReady = false;
   state.mode = 'paused';
@@ -1065,6 +1103,7 @@ btnLeave.addEventListener('click', () => {
   setConnState('LOCAL');
   state.reconnectLeft = 0;
   state.reconnectAt = 0;
+  state.reconnectToken = '';
   renderScreenState();
 });
 

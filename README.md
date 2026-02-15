@@ -86,4 +86,4 @@ scripts/playwright_smoke_scenarios.sh
 - `QA_CHECKLIST.md`: compliance sweep
 
 ## Notes
-- Reconnect slot recovery is currently nickname-based.
+- Reconnect slot recovery uses per-slot reconnect token.

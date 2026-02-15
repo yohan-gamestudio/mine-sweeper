@@ -44,7 +44,7 @@ export const SERVER_EVENTS = Object.freeze([
 
 export const EVENT_DOC = Object.freeze({
   [EVENT.ROOM_CREATE]: { nickname: 'string(2-12)' },
-  [EVENT.ROOM_JOIN]: { nickname: 'string(2-12)', roomCode: 'string(4 digits)' },
+  [EVENT.ROOM_JOIN]: { nickname: 'string(2-12)', roomCode: 'string(4 digits)', reconnectToken: 'string(optional)' },
   [EVENT.PLAYER_READY]: { ready: 'boolean' },
   [EVENT.PLAYER_MOVE]: { x: 'number', z: 'number', yaw: 'number' },
   [EVENT.GAME_START]: {},
@@ -56,6 +56,7 @@ export const EVENT_DOC = Object.freeze({
     roomCode: 'string',
     hostSlot: 'string',
     youSlot: 'string',
+    youToken: 'string',
     players: 'array<{slot,name,ready,connected}>'
   },
   [EVENT.GAME_STATE]: {

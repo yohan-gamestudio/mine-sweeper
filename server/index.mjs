@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { EVENT } from '../shared/protocol.js';
 import { validateClientEvent } from '../shared/validation.js';
@@ -63,6 +64,10 @@ function makeDefaultSpawn(slot) {
   };
 }
 
+function makeReconnectToken() {
+  return randomBytes(16).toString('hex');
+}
+
 function send(ws, type, payload) {
   ws.send(JSON.stringify({ type, payload }));
 }
@@ -91,6 +96,7 @@ function roomStatePayload(room, youSlot) {
     roomCode: room.code,
     hostSlot: HOST_SLOT,
     youSlot,
+    youToken: room.players[youSlot]?.reconnectToken ?? null,
     players: ROOM_SLOTS.map((slot) => ({
       slot,
       name: room.players[slot]?.nickname ?? '-',
@@ -208,16 +214,33 @@ function makeRoomCode() {
   return null;
 }
 
-function reclaimSlot(room, nickname, ws) {
-  for (const slot of ROOM_SLOTS) {
-    const player = room.players[slot];
-    if (player?.nickname === nickname && !player.ws && isReconnectable(player)) {
-      player.ws = ws;
-      player.disconnectedAt = 0;
-      return slot;
+function reclaimSlot(room, { nickname, reconnectToken }, ws) {
+  if (reconnectToken) {
+    for (const slot of ROOM_SLOTS) {
+      const player = room.players[slot];
+      if (player?.reconnectToken === reconnectToken && !player.ws && isReconnectable(player)) {
+        if (player.nickname !== nickname) return { error: 'TOKEN_NICKNAME_MISMATCH' };
+        player.ws = ws;
+        player.disconnectedAt = 0;
+        return { slot };
+      }
     }
   }
-  return null;
+
+  const candidates = ROOM_SLOTS.filter((slot) => {
+    const player = room.players[slot];
+    return player?.nickname === nickname && !player.ws && isReconnectable(player);
+  });
+  if (candidates.length > 1) {
+    return { error: 'AMBIGUOUS_RECONNECT' };
+  }
+  if (candidates.length === 1) {
+    const slot = candidates[0];
+    room.players[slot].ws = ws;
+    room.players[slot].disconnectedAt = 0;
+    return { slot };
+  }
+  return { slot: null };
 }
 
 function findJoinableSlot(room) {
@@ -346,7 +369,13 @@ wss.on('connection', (ws) => {
         game: null,
         positions: {}
       };
-      room.players[HOST_SLOT] = { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 };
+      room.players[HOST_SLOT] = {
+        ws,
+        nickname: checked.data.nickname,
+        ready: false,
+        disconnectedAt: 0,
+        reconnectToken: makeReconnectToken()
+      };
       ensureRoomPosition(room, HOST_SLOT);
 
       rooms.set(code, room);
@@ -369,7 +398,21 @@ wss.on('connection', (ws) => {
 
       leaveRoom(ws);
 
-      let slot = reclaimSlot(room, checked.data.nickname, ws);
+      const reclaimed = reclaimSlot(
+        room,
+        { nickname: checked.data.nickname, reconnectToken: checked.data.reconnectToken },
+        ws
+      );
+      if (reclaimed.error === 'TOKEN_NICKNAME_MISMATCH') {
+        send(ws, EVENT.ERROR, { code: 'TOKEN_NICKNAME_MISMATCH', message: 'reconnect token does not match nickname' });
+        return;
+      }
+      if (reclaimed.error === 'AMBIGUOUS_RECONNECT') {
+        send(ws, EVENT.ERROR, { code: 'RECONNECT_TOKEN_REQUIRED', message: 'reconnect token required for duplicate nickname' });
+        return;
+      }
+
+      let slot = reclaimed.slot;
       if (!slot) {
         if (room.started && room.game) {
           send(ws, EVENT.ERROR, { code: 'ROOM_IN_PROGRESS', message: 'only reconnect is allowed during game' });
@@ -380,7 +423,13 @@ wss.on('connection', (ws) => {
           send(ws, EVENT.ERROR, { code: 'ROOM_FULL', message: 'room is already full' });
           return;
         }
-        room.players[slot] = { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 };
+        room.players[slot] = {
+          ws,
+          nickname: checked.data.nickname,
+          ready: false,
+          disconnectedAt: 0,
+          reconnectToken: makeReconnectToken()
+        };
       }
 
       ensureRoomPosition(room, slot);
