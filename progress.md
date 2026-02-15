@@ -78,3 +78,16 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - Lobby Tab press does not activate in-game map mode.
   - snapshots: `t1s3b-entry-after-canvas-click.txt`, `t1s3b-lobby-after-tab.txt`
   - console errors: none (`.playwright-cli/console-2026-02-15T14-49-57-090Z.log`).
+
+## Progress Update 6 (Task 2 Step 1)
+- Added shared protocol schema in `shared/protocol.js`:
+  - client/server event sets
+  - event doc map
+  - helpers: `isClientEvent`, `isServerEvent`
+- Added import smoke script: `scripts/protocol_smoke.mjs`.
+- Client now imports shared protocol and exposes event count in text-state output.
+- Verification:
+  - `npm run build` passed.
+  - `node scripts/protocol_smoke.mjs` -> `protocol_smoke:ok`.
+  - Playwright CLI state check: `.playwright/snapshots/t2s1-state.txt` (includes `protocol_event_count`).
+  - Console errors: none (`.playwright-cli/console-2026-02-15T14-51-16-171Z.log`).

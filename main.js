@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { EVENT } from './shared/protocol.js';
 
 const GRID_SIZE = 16;
 const MINE_COUNT = 40;
@@ -12,6 +13,7 @@ const WALK_SPEED = 4.2;
 const SPRINT_SPEED = 7;
 const JUMP_VELOCITY = 6;
 const GRAVITY = 20;
+const PROTOCOL_EVENT_COUNT = Object.keys(EVENT).length;
 
 const app = document.querySelector('#app');
 app.innerHTML = `
@@ -970,7 +972,8 @@ window.render_game_to_text = () => {
     hud: {
       lives: state.lives,
       status: state.mode === 'won' ? 'WON' : state.mode === 'lost' ? 'LOST' : state.dead ? 'DEAD' : 'ALIVE',
-      map_open: state.mapOpen
+      map_open: state.mapOpen,
+      protocol_event_count: PROTOCOL_EVENT_COUNT
     },
     board: {
       opened_safe: openedSafe,
