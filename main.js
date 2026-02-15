@@ -1,0 +1,706 @@
+import * as THREE from 'three';
+
+const GRID_SIZE = 16;
+const MINE_COUNT = 40;
+const CELL_SIZE = 4.4;
+const INTERACT_RANGE_BLOCKS = 3;
+const INTERACT_RANGE_UNITS = INTERACT_RANGE_BLOCKS * CELL_SIZE;
+const MAX_LIVES = 5;
+const RESPAWN_SECONDS = 3;
+const PLAYER_HEIGHT = 1.7;
+const WALK_SPEED = 4.2;
+const SPRINT_SPEED = 7;
+const JUMP_VELOCITY = 6;
+const GRAVITY = 20;
+
+const app = document.querySelector('#app');
+app.innerHTML = `
+  <div id="hud">
+    <div>Lives: <span id="hud-lives" class="value"></span></div>
+    <div>Status: <span id="hud-status" class="value"></span></div>
+    <div>Room: <span class="value">SINGLE</span></div>
+    <div>Connection: <span class="value">SINGLE</span></div>
+    <div id="hud-tip">Click to lock pointer</div>
+  </div>
+  <div id="crosshair">+</div>
+  <div id="overlay">
+    <div id="start-card">
+      <h1>Single Test: 3D Minesweeper</h1>
+      <p>Move: WASD, Jump: Space, Sprint: Shift</p>
+      <p>Open: Left Click, Flag: Right Click</p>
+      <p>Map: Hold Tab, Fullscreen: F</p>
+      <p>Click anywhere to start</p>
+    </div>
+    <div id="result-card" class="hidden">
+      <h1 id="result-title"></h1>
+      <p id="result-sub"></p>
+      <p>Press R to restart with a new seed.</p>
+    </div>
+  </div>
+  <div id="map-wrap" class="hidden">
+    <div id="map-panel">
+      <canvas id="map-canvas"></canvas>
+    </div>
+  </div>
+`;
+
+const hudLives = document.querySelector('#hud-lives');
+const hudStatus = document.querySelector('#hud-status');
+const hudTip = document.querySelector('#hud-tip');
+const startCard = document.querySelector('#start-card');
+const resultCard = document.querySelector('#result-card');
+const resultTitle = document.querySelector('#result-title');
+const resultSub = document.querySelector('#result-sub');
+const mapWrap = document.querySelector('#map-wrap');
+const mapCanvas = document.querySelector('#map-canvas');
+const mapCtx = mapCanvas.getContext('2d');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87c1ff);
+scene.fog = new THREE.Fog(0x87c1ff, 28, 80);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+app.appendChild(renderer.domElement);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 180);
+camera.position.set(0, PLAYER_HEIGHT, 0);
+
+const lightAmbient = new THREE.AmbientLight(0xffffff, 0.55);
+scene.add(lightAmbient);
+const lightDir = new THREE.DirectionalLight(0xffffff, 0.9);
+lightDir.position.set(12, 24, 10);
+scene.add(lightDir);
+
+const worldSize = GRID_SIZE * CELL_SIZE;
+const boardMin = -worldSize / 2;
+const boardMax = worldSize / 2;
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(worldSize + 28, worldSize + 28),
+  new THREE.MeshStandardMaterial({ color: 0x7db56c, roughness: 0.92 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+const boardGroup = new THREE.Group();
+scene.add(boardGroup);
+
+const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x695548, roughness: 0.86 });
+const safeOpenedMaterial = new THREE.MeshStandardMaterial({ color: 0x9da9b2, roughness: 0.84 });
+const explodedMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1.0 });
+const mineCapMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4046, roughness: 0.68, metalness: 0.16 });
+const flagPoleMaterial = new THREE.MeshStandardMaterial({ color: 0xc7c7c7, roughness: 0.5 });
+const flagClothMaterial = new THREE.MeshStandardMaterial({ color: 0xe53737, roughness: 0.8 });
+
+const raycaster = new THREE.Raycaster();
+const baseMeshes = [];
+const fxBursts = [];
+
+const state = {
+  mode: 'start',
+  mapOpen: false,
+  pointerLocked: false,
+  yaw: 0,
+  pitch: 0,
+  velocityY: 0,
+  lives: MAX_LIVES,
+  dead: false,
+  deadLeft: 0,
+  deadPos: new THREE.Vector3(),
+  deadYaw: 0,
+  deadPitch: 0,
+  safeOpened: 0,
+  totalSafe: GRID_SIZE * GRID_SIZE - MINE_COUNT,
+  startTimeMs: 0,
+  elapsedMs: 0,
+  teammatePos: new THREE.Vector2(1, 1),
+  cells: [],
+  cellsFlat: []
+};
+
+function worldFromCell(x, y) {
+  return {
+    x: boardMin + x * CELL_SIZE + CELL_SIZE * 0.5,
+    z: boardMin + y * CELL_SIZE + CELL_SIZE * 0.5
+  };
+}
+
+function cellFromWorld(x, z) {
+  const cx = Math.floor((x - boardMin) / CELL_SIZE);
+  const cy = Math.floor((z - boardMin) / CELL_SIZE);
+  if (cx < 0 || cy < 0 || cx >= GRID_SIZE || cy >= GRID_SIZE) {
+    return null;
+  }
+  return { x: cx, y: cy };
+}
+
+function neighbors8(x, y) {
+  const out = [];
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < GRID_SIZE && ny < GRID_SIZE) {
+        out.push({ x: nx, y: ny });
+      }
+    }
+  }
+  return out;
+}
+
+function randomMineSet() {
+  const ids = new Set();
+  while (ids.size < MINE_COUNT) {
+    ids.add(Math.floor(Math.random() * GRID_SIZE * GRID_SIZE));
+  }
+  return ids;
+}
+
+function buildBoard() {
+  boardGroup.clear();
+  baseMeshes.length = 0;
+  state.cells = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE));
+  state.cellsFlat = [];
+
+  const mineIds = randomMineSet();
+
+  for (let y = 0; y < GRID_SIZE; y += 1) {
+    for (let x = 0; x < GRID_SIZE; x += 1) {
+      const id = y * GRID_SIZE + x;
+      const mine = mineIds.has(id);
+      const pos = worldFromCell(x, y);
+
+      const tileSize = CELL_SIZE * 0.96;
+      const base = new THREE.Mesh(new THREE.BoxGeometry(tileSize, 0.18, tileSize), baseMaterial);
+      base.position.set(pos.x, 0.09, pos.z);
+      base.userData = { x, y };
+      boardGroup.add(base);
+      baseMeshes.push(base);
+
+      // Slightly smaller mine cap on a larger tile.
+      const cap = new THREE.Mesh(
+        new THREE.CylinderGeometry(CELL_SIZE * 0.15, CELL_SIZE * 0.2, 0.24, 14),
+        mineCapMaterial
+      );
+      cap.position.set(pos.x, 0.27, pos.z);
+      boardGroup.add(cap);
+
+      const flag = new THREE.Group();
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.95, 8), flagPoleMaterial);
+      pole.position.set(0, 0.56, 0);
+      const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.26, 0.06), flagClothMaterial);
+      cloth.position.set(0.22, 0.72, 0);
+      flag.add(pole);
+      flag.add(cloth);
+      flag.position.set(pos.x, 0, pos.z);
+      flag.visible = false;
+      boardGroup.add(flag);
+
+      const cell = {
+        x,
+        y,
+        mine,
+        number: 0,
+        opened: false,
+        exploded: false,
+        flagged: false,
+        base,
+        cap,
+        flag
+      };
+
+      state.cells[y][x] = cell;
+      state.cellsFlat.push(cell);
+    }
+  }
+
+  for (let y = 0; y < GRID_SIZE; y += 1) {
+    for (let x = 0; x < GRID_SIZE; x += 1) {
+      const cell = state.cells[y][x];
+      const n = neighbors8(x, y).reduce((acc, p) => acc + (state.cells[p.y][p.x].mine ? 1 : 0), 0);
+      cell.number = n;
+    }
+  }
+}
+
+function resetGame() {
+  state.mode = 'playing';
+  state.mapOpen = false;
+  state.lives = MAX_LIVES;
+  state.dead = false;
+  state.deadLeft = 0;
+  state.velocityY = 0;
+  state.safeOpened = 0;
+  state.totalSafe = GRID_SIZE * GRID_SIZE - MINE_COUNT;
+  state.startTimeMs = performance.now();
+  state.elapsedMs = 0;
+  state.teammatePos.set(1, 1);
+
+  buildBoard();
+
+  const center = worldFromCell(Math.floor(GRID_SIZE / 2), Math.floor(GRID_SIZE / 2));
+  camera.position.set(center.x, PLAYER_HEIGHT, center.z);
+  state.yaw = 0;
+  state.pitch = 0;
+  resultCard.classList.add('hidden');
+  mapWrap.classList.add('hidden');
+}
+
+resetGame();
+state.mode = 'start';
+
+function setStatusText() {
+  hudLives.textContent = `${state.lives}`;
+  if (state.mode === 'won') {
+    hudStatus.textContent = 'WON';
+  } else if (state.mode === 'lost') {
+    hudStatus.textContent = 'LOST';
+  } else if (state.dead) {
+    hudStatus.textContent = `DEAD (${Math.ceil(state.deadLeft)}s)`;
+  } else {
+    hudStatus.textContent = 'ALIVE';
+  }
+}
+
+const keys = new Set();
+
+function setPointerLockText() {
+  if (!state.pointerLocked) {
+    hudTip.textContent = 'Click to lock pointer';
+  } else if (state.mapOpen) {
+    hudTip.textContent = 'Map open: movement allowed, look locked';
+  } else {
+    hudTip.textContent = `LMB open | RMB flag | Tab map | Lives ${state.lives}`;
+  }
+}
+
+function safeRequestPointerLock() {
+  try {
+    const maybePromise = renderer.domElement.requestPointerLock();
+    if (maybePromise && typeof maybePromise.catch === 'function') {
+      maybePromise.catch(() => {});
+    }
+  } catch {
+    // Ignore pointer lock failures in restricted/headless environments.
+  }
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function canInteractCell(cell) {
+  if (!cell) return false;
+  if (cell.exploded) return false;
+  return true;
+}
+
+function applyCellVisual(cell) {
+  cell.flag.visible = cell.flagged;
+  if (cell.exploded) {
+    cell.cap.visible = false;
+    cell.base.material = explodedMaterial;
+    return;
+  }
+  if (cell.opened && !cell.mine) {
+    cell.cap.visible = false;
+    cell.base.material = safeOpenedMaterial;
+  } else {
+    cell.cap.visible = true;
+    cell.base.material = baseMaterial;
+  }
+}
+
+function addExplosionBurst(cell) {
+  const p = worldFromCell(cell.x, cell.y);
+  const burst = new THREE.Mesh(
+    new THREE.SphereGeometry(0.18, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff8b5d, transparent: true, opacity: 0.9 })
+  );
+  burst.position.set(p.x, 0.45, p.z);
+  scene.add(burst);
+  fxBursts.push({ mesh: burst, t: 0 });
+}
+
+function openCell(cell) {
+  if (state.mode !== 'playing' || state.dead) return;
+  if (!canInteractCell(cell)) return;
+  if (cell.flagged) return;
+
+  if (cell.mine) {
+    cell.exploded = true;
+    applyCellVisual(cell);
+    addExplosionBurst(cell);
+    state.lives -= 1;
+    state.dead = true;
+    state.deadLeft = RESPAWN_SECONDS;
+    state.deadPos.copy(camera.position);
+    state.deadYaw = state.yaw;
+    state.deadPitch = state.pitch;
+
+    if (state.lives <= 0) {
+      state.mode = 'lost';
+      state.dead = false;
+      resultTitle.textContent = 'DEFEAT';
+      resultSub.textContent = `Lives exhausted. Explosions: ${MAX_LIVES}`;
+      resultCard.classList.remove('hidden');
+      document.exitPointerLock?.();
+    }
+    return;
+  }
+
+  if (!cell.opened) {
+    cell.opened = true;
+    state.safeOpened += 1;
+  }
+  applyCellVisual(cell);
+
+  if (state.safeOpened >= state.totalSafe) {
+    state.mode = 'won';
+    const seconds = Math.round((performance.now() - state.startTimeMs) / 1000);
+    resultTitle.textContent = 'VICTORY';
+    resultSub.textContent = `Cleared all safe cells in ${seconds}s.`;
+    resultCard.classList.remove('hidden');
+    document.exitPointerLock?.();
+  }
+}
+
+function toggleFlag(cell) {
+  if (state.mode !== 'playing' || state.dead) return;
+  if (!canInteractCell(cell)) return;
+  cell.flagged = !cell.flagged;
+  applyCellVisual(cell);
+}
+
+function getFeetCell() {
+  const c = cellFromWorld(camera.position.x, camera.position.z);
+  if (!c) return null;
+  return state.cells[c.y][c.x];
+}
+
+function getTargetCell() {
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const hit = raycaster.intersectObjects(baseMeshes, false)[0];
+  if (hit) {
+    const d = camera.position.distanceTo(hit.point);
+    if (d <= INTERACT_RANGE_UNITS) {
+      const { x, y } = hit.object.userData;
+      return state.cells[y][x];
+    }
+  }
+  return getFeetCell();
+}
+
+function holdMap(open) {
+  state.mapOpen = open;
+  mapWrap.classList.toggle('hidden', !open || state.mode !== 'playing');
+  setPointerLockText();
+}
+
+function onMouseDown(event) {
+  if (state.mode === 'start') {
+    startCard.classList.add('hidden');
+    state.mode = 'playing';
+    state.startTimeMs = performance.now();
+    safeRequestPointerLock();
+    return;
+  }
+
+  if (state.mode === 'won' || state.mode === 'lost') {
+    return;
+  }
+
+  if (!state.pointerLocked) {
+    safeRequestPointerLock();
+  }
+
+  const cell = getTargetCell();
+  if (!cell) return;
+
+  if (event.button === 0) {
+    openCell(cell);
+  } else if (event.button === 2) {
+    toggleFlag(cell);
+  }
+}
+
+function onMouseMove(event) {
+  if (!state.pointerLocked || state.mapOpen || state.dead || state.mode !== 'playing') return;
+  const sensitivity = 0.0025;
+  state.yaw -= event.movementX * sensitivity;
+  state.pitch -= event.movementY * sensitivity;
+  state.pitch = Math.max(-1.47, Math.min(1.47, state.pitch));
+}
+
+window.addEventListener('contextmenu', (e) => e.preventDefault());
+window.addEventListener('mousedown', onMouseDown);
+window.addEventListener('mousemove', onMouseMove);
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    holdMap(true);
+  }
+  if (e.code === 'KeyF') {
+    toggleFullscreen();
+  }
+  if (e.code === 'KeyR' && (state.mode === 'won' || state.mode === 'lost')) {
+    resetGame();
+    safeRequestPointerLock();
+  }
+  keys.add(e.code);
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'Tab') {
+    holdMap(false);
+  }
+  keys.delete(e.code);
+});
+
+document.addEventListener('pointerlockchange', () => {
+  state.pointerLocked = document.pointerLockElement === renderer.domElement;
+  setPointerLockText();
+});
+
+function drawMap() {
+  if (!state.mapOpen || state.mode !== 'playing') return;
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = mapCanvas.clientWidth;
+  const h = mapCanvas.clientHeight;
+  const rw = Math.floor(w * dpr);
+  const rh = Math.floor(h * dpr);
+  if (mapCanvas.width !== rw || mapCanvas.height !== rh) {
+    mapCanvas.width = rw;
+    mapCanvas.height = rh;
+  }
+  mapCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  mapCtx.clearRect(0, 0, w, h);
+  const cellPx = Math.min(w, h) / GRID_SIZE;
+  const ox = (w - cellPx * GRID_SIZE) * 0.5;
+  const oy = (h - cellPx * GRID_SIZE) * 0.5;
+
+  for (let y = 0; y < GRID_SIZE; y += 1) {
+    for (let x = 0; x < GRID_SIZE; x += 1) {
+      const c = state.cells[y][x];
+      const px = ox + x * cellPx;
+      const py = oy + y * cellPx;
+
+      if (c.exploded) {
+        mapCtx.fillStyle = '#271c1c';
+        mapCtx.fillRect(px, py, cellPx, cellPx);
+        mapCtx.fillStyle = '#ff735f';
+        mapCtx.font = `${Math.floor(cellPx * 0.62)}px monospace`;
+        mapCtx.textAlign = 'center';
+        mapCtx.textBaseline = 'middle';
+        mapCtx.fillText('X', px + cellPx / 2, py + cellPx / 2);
+      } else if (c.opened) {
+        mapCtx.fillStyle = '#8f98a3';
+        mapCtx.fillRect(px, py, cellPx, cellPx);
+      } else {
+        mapCtx.fillStyle = '#47515e';
+        mapCtx.fillRect(px, py, cellPx, cellPx);
+      }
+
+      if (c.flagged) {
+        mapCtx.fillStyle = '#ff4545';
+        mapCtx.beginPath();
+        mapCtx.moveTo(px + cellPx * 0.25, py + cellPx * 0.75);
+        mapCtx.lineTo(px + cellPx * 0.25, py + cellPx * 0.2);
+        mapCtx.lineTo(px + cellPx * 0.75, py + cellPx * 0.35);
+        mapCtx.closePath();
+        mapCtx.fill();
+      }
+
+      mapCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+      mapCtx.strokeRect(px, py, cellPx, cellPx);
+    }
+  }
+
+  const myCell = getFeetCell();
+  if (myCell) {
+    mapCtx.fillStyle = '#34a1ff';
+    mapCtx.beginPath();
+    mapCtx.arc(ox + (myCell.x + 0.5) * cellPx, oy + (myCell.y + 0.5) * cellPx, cellPx * 0.2, 0, Math.PI * 2);
+    mapCtx.fill();
+  }
+
+  mapCtx.fillStyle = '#62dd88';
+  mapCtx.beginPath();
+  mapCtx.arc(
+    ox + (state.teammatePos.x + 0.5) * cellPx,
+    oy + (state.teammatePos.y + 0.5) * cellPx,
+    cellPx * 0.2,
+    0,
+    Math.PI * 2
+  );
+  mapCtx.fill();
+}
+
+function updateMovement(dt) {
+  if (state.mode !== 'playing' || state.dead) return;
+
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  if (forward.lengthSq() > 0) {
+    forward.normalize();
+  } else {
+    forward.set(0, 0, -1);
+  }
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  const moveDir = new THREE.Vector3();
+
+  if (keys.has('KeyW')) moveDir.add(forward);
+  if (keys.has('KeyS')) moveDir.sub(forward);
+  if (keys.has('KeyD')) moveDir.add(right);
+  if (keys.has('KeyA')) moveDir.sub(right);
+
+  if (moveDir.lengthSq() > 0) {
+    moveDir.normalize();
+    const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? SPRINT_SPEED : WALK_SPEED;
+    camera.position.addScaledVector(moveDir, speed * dt);
+  }
+
+  if (camera.position.y <= PLAYER_HEIGHT + 0.001) {
+    camera.position.y = PLAYER_HEIGHT;
+    state.velocityY = Math.max(0, state.velocityY);
+    if (keys.has('Space')) {
+      state.velocityY = JUMP_VELOCITY;
+    }
+  }
+
+  state.velocityY -= GRAVITY * dt;
+  camera.position.y += state.velocityY * dt;
+  if (camera.position.y < PLAYER_HEIGHT) {
+    camera.position.y = PLAYER_HEIGHT;
+    state.velocityY = 0;
+  }
+
+  camera.position.x = Math.max(boardMin + 0.5, Math.min(boardMax - 0.5, camera.position.x));
+  camera.position.z = Math.max(boardMin + 0.5, Math.min(boardMax - 0.5, camera.position.z));
+}
+
+function updateDead(dt) {
+  if (!state.dead) return;
+  state.deadLeft -= dt;
+  camera.position.copy(state.deadPos);
+  state.yaw = state.deadYaw;
+  state.pitch = state.deadPitch;
+  if (state.deadLeft <= 0 && state.mode === 'playing') {
+    state.dead = false;
+    state.deadLeft = 0;
+    const center = worldFromCell(Math.floor(GRID_SIZE / 2), Math.floor(GRID_SIZE / 2));
+    camera.position.set(center.x, PLAYER_HEIGHT, center.z);
+    state.velocityY = 0;
+  }
+}
+
+function updateFx(dt) {
+  for (let i = fxBursts.length - 1; i >= 0; i -= 1) {
+    const b = fxBursts[i];
+    b.t += dt;
+    const s = 1 + b.t * 6;
+    b.mesh.scale.setScalar(s);
+    b.mesh.material.opacity = Math.max(0, 1 - b.t * 4);
+    if (b.t > 0.35) {
+      scene.remove(b.mesh);
+      b.mesh.geometry.dispose();
+      b.mesh.material.dispose();
+      fxBursts.splice(i, 1);
+    }
+  }
+}
+
+function step(dt) {
+  if (state.mode === 'playing') {
+    state.elapsedMs += dt * 1000;
+  }
+
+  updateDead(dt);
+  updateMovement(dt);
+  updateFx(dt);
+
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = state.yaw;
+  camera.rotation.x = state.pitch;
+
+  drawMap();
+  setStatusText();
+  setPointerLockText();
+
+  renderer.render(scene, camera);
+}
+
+let last = performance.now();
+function animate(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  step(dt);
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+window.advanceTime = (ms) => {
+  const frameMs = 1000 / 60;
+  const steps = Math.max(1, Math.round(ms / frameMs));
+  for (let i = 0; i < steps; i += 1) {
+    step(1 / 60);
+  }
+};
+
+window.render_game_to_text = () => {
+  const flagged = state.cellsFlat.filter((c) => c.flagged).length;
+  const openedSafe = state.cellsFlat.filter((c) => c.opened && !c.mine).length;
+  const exploded = state.cellsFlat.filter((c) => c.exploded).length;
+  const me = cellFromWorld(camera.position.x, camera.position.z);
+  const payload = {
+    mode: state.mode,
+    coord_system: {
+      grid_origin: 'top-left is (0,0)',
+      world_axes: '+x right, +z down the map, y up',
+      grid_size: GRID_SIZE
+    },
+    rules: {
+      mines: MINE_COUNT,
+      total_safe: state.totalSafe,
+      interact_range_blocks: INTERACT_RANGE_BLOCKS,
+      chain_open: false,
+      chording: false
+    },
+    player: {
+      world_x: Number(camera.position.x.toFixed(2)),
+      world_y: Number(camera.position.y.toFixed(2)),
+      world_z: Number(camera.position.z.toFixed(2)),
+      cell: me,
+      yaw: Number(state.yaw.toFixed(2)),
+      pitch: Number(state.pitch.toFixed(2)),
+      dead: state.dead,
+      dead_left: Number(state.deadLeft.toFixed(2))
+    },
+    hud: {
+      lives: state.lives,
+      status: state.mode === 'won' ? 'WON' : state.mode === 'lost' ? 'LOST' : state.dead ? 'DEAD' : 'ALIVE',
+      map_open: state.mapOpen
+    },
+    board: {
+      opened_safe: openedSafe,
+      flagged,
+      exploded,
+      remaining_safe: state.totalSafe - openedSafe
+    }
+  };
+  return JSON.stringify(payload);
+};

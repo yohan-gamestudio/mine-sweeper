@@ -1,0 +1,111 @@
+:root {
+  color-scheme: light;
+  font-family: "IBM Plex Sans", "Noto Sans KR", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #88b8ff;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+#hud {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  background: rgba(14, 20, 28, 0.72);
+  color: #f3f7ff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 220px;
+  line-height: 1.35;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+#hud .value {
+  color: #a7ff9e;
+}
+
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+#start-card,
+#result-card {
+  background: rgba(10, 16, 23, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 12px;
+  color: #edf3ff;
+  padding: 16px 18px;
+  width: min(92vw, 440px);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+}
+
+#start-card h1,
+#result-card h1 {
+  margin: 0 0 10px;
+  font-size: 20px;
+}
+
+#start-card p,
+#result-card p {
+  margin: 6px 0;
+  opacity: 0.94;
+  font-size: 14px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+#map-wrap {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+#map-panel {
+  width: min(76vw, 760px);
+  height: min(76vh, 760px);
+  background: rgba(8, 12, 18, 0.48);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  padding: 10px;
+}
+
+#map-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
