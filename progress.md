@@ -52,3 +52,18 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - playing snapshot: `.playwright/snapshots/t1s1c-playing.txt`
   - screenshot: `.playwright/artifacts/t1s1c-playing.png`
   - console errors: none (`.playwright-cli/console-2026-02-15T14-42-54-474Z.log`).
+
+## Progress Update 4 (Task 1 Step 2)
+- Added local lobby flow improvements:
+  - Entry create/join now uses helper `enterLobbyWithRoom`.
+  - Nickname persisted via `localStorage` and restored on load.
+  - Leave lobby returns to entry and resets local transient state.
+  - Result screen now has explicit buttons: `Restart` and `Back to Lobby`.
+- Updated result flow wiring to support button-driven transitions.
+- Playwright CLI verification completed:
+  - entry: `.playwright/snapshots/t1s2v-entry.txt`
+  - lobby: `.playwright/snapshots/t1s2v-lobby.txt`
+  - entry-after-leave: `.playwright/snapshots/t1s2v-entry-after-leave.txt`
+  - playing: `.playwright/snapshots/t1s2v-playing.txt`
+  - screenshot: `.playwright/artifacts/t1s2v-playing.png`
+  - console errors: none (`.playwright-cli/console-2026-02-15T14-48-43-598Z.log`).

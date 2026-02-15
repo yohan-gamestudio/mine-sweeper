@@ -50,7 +50,11 @@ app.innerHTML = `
     <div id="result-card" class="hidden">
       <h1 id="result-title"></h1>
       <p id="result-sub"></p>
-      <p>Press R to restart with a new seed.</p>
+      <p>
+        <button id="btn-result-restart">Restart</button>
+        <button id="btn-result-lobby">Back to Lobby</button>
+      </p>
+      <p>Press R to restart quickly.</p>
     </div>
   </div>
   <div id="map-wrap" class="hidden">
@@ -79,6 +83,8 @@ const btnJoin = document.querySelector('#btn-join');
 const btnReady = document.querySelector('#btn-ready');
 const btnStart = document.querySelector('#btn-start');
 const btnLeave = document.querySelector('#btn-leave');
+const btnResultRestart = document.querySelector('#btn-result-restart');
+const btnResultLobby = document.querySelector('#btn-result-lobby');
 const resultCard = document.querySelector('#result-card');
 const resultTitle = document.querySelector('#result-title');
 const resultSub = document.querySelector('#result-sub');
@@ -566,6 +572,15 @@ function startLocalMatch() {
   safeRequestPointerLock();
 }
 
+function enterLobbyWithRoom(roomCode) {
+  state.roomCode = roomCode;
+  state.localReady = false;
+  state.screen = 'lobby';
+  entryError.textContent = '';
+  localStorage.setItem('ms_nickname', state.nickname);
+  renderScreenState();
+}
+
 function onMouseDown(event) {
   if (state.screen !== 'playing') return;
 
@@ -602,11 +617,7 @@ btnCreate.addEventListener('click', () => {
     return;
   }
   state.nickname = nickname;
-  state.roomCode = randomRoomCode();
-  state.localReady = false;
-  entryError.textContent = '';
-  state.screen = 'lobby';
-  renderScreenState();
+  enterLobbyWithRoom(randomRoomCode());
 });
 
 btnJoin.addEventListener('click', () => {
@@ -621,11 +632,7 @@ btnJoin.addEventListener('click', () => {
     return;
   }
   state.nickname = nickname;
-  state.roomCode = code;
-  state.localReady = false;
-  entryError.textContent = '';
-  state.screen = 'lobby';
-  renderScreenState();
+  enterLobbyWithRoom(code);
 });
 
 btnReady.addEventListener('click', () => {
@@ -641,6 +648,25 @@ btnStart.addEventListener('click', () => {
 btnLeave.addEventListener('click', () => {
   state.screen = 'entry';
   state.localReady = false;
+  state.mode = 'paused';
+  state.mapOpen = false;
+  mapWrap.classList.add('hidden');
+  document.exitPointerLock?.();
+  nicknameInput.value = state.nickname;
+  joinCodeInput.value = '';
+  entryError.textContent = '';
+  renderScreenState();
+});
+
+btnResultRestart.addEventListener('click', () => {
+  startLocalMatch();
+});
+
+btnResultLobby.addEventListener('click', () => {
+  state.screen = 'lobby';
+  state.mode = 'paused';
+  state.localReady = false;
+  document.exitPointerLock?.();
   renderScreenState();
 });
 
@@ -679,6 +705,12 @@ document.addEventListener('pointerlockchange', () => {
   state.pointerLocked = document.pointerLockElement === renderer.domElement;
   setPointerLockText();
 });
+
+const savedNickname = localStorage.getItem('ms_nickname');
+if (savedNickname && validNickname(savedNickname)) {
+  state.nickname = savedNickname;
+  nicknameInput.value = savedNickname;
+}
 
 renderScreenState();
 

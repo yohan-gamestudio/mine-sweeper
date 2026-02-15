@@ -98,7 +98,8 @@ body {
 }
 
 #entry-card button,
-#lobby-card button {
+#lobby-card button,
+#result-card button {
   border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: 8px;
   background: rgba(75, 160, 102, 0.85);
@@ -109,7 +110,8 @@ body {
 }
 
 #entry-card button[disabled],
-#lobby-card button[disabled] {
+#lobby-card button[disabled],
+#result-card button[disabled] {
   opacity: 0.55;
   cursor: not-allowed;
 }
