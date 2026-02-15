@@ -142,3 +142,15 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_ready_start_smoke.mjs` => `ws_ready_start_smoke:ok room=...`.
   - Playwright health snapshot: `.playwright/snapshots/t3s3-health.txt`.
   - Console errors: none (`.playwright-cli/console-2026-02-15T14-59-52-628Z.log`).
+
+## Progress Update 11 (Task 4 Step 1)
+- Added pure server board engine module: `server/board_engine.mjs`.
+  - board generation
+  - 8-neighbor number calculation
+  - open/flag rules (no chain-open)
+  - public cell projection helper
+- Added board engine smoke test: `scripts/board_engine_smoke.mjs`.
+- Verification:
+  - `node scripts/board_engine_smoke.mjs` => `board_engine_smoke:ok`.
+  - Playwright entry snapshot: `.playwright/snapshots/t4s1-entry.txt`.
+  - Console errors: none (`.playwright-cli/console-2026-02-15T15-01-09-685Z.log`).
