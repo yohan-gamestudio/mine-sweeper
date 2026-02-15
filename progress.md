@@ -154,3 +154,17 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/board_engine_smoke.mjs` => `board_engine_smoke:ok`.
   - Playwright entry snapshot: `.playwright/snapshots/t4s1-entry.txt`.
   - Console errors: none (`.playwright-cli/console-2026-02-15T15-01-09-685Z.log`).
+
+## Progress Update 12 (Task 4 Step 2)
+- Extended server gameplay runtime with life/death/respawn rules:
+  - `game:start` now initializes board + game state.
+  - `cell:open` and `cell:flag` are server-authoritative.
+  - Mine hit decreases team lives and sets per-player `deadUntil` (3s lock).
+  - Immediate input during lock returns `DEAD_LOCK`.
+  - Win/lose transitions emit `game:result`.
+  - Incremental updates emitted through `game:patch`.
+- Verification:
+  - `node scripts/ws_ready_start_smoke.mjs` passed.
+  - `node scripts/ws_life_respawn_smoke.mjs` passed (includes DEAD_LOCK expiry check).
+  - Playwright health snapshot: `.playwright/snapshots/t4s2-health.txt`.
+  - Console errors: none (`.playwright-cli/console-2026-02-15T15-03-30-062Z.log`).

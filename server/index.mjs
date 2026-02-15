@@ -2,6 +2,7 @@ import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { EVENT } from '../shared/protocol.js';
 import { validateClientEvent } from '../shared/validation.js';
+import { boardToPublicCells, createBoard, openCell, toggleFlag } from './board_engine.mjs';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3000);
@@ -35,6 +36,12 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ noServer: true });
 const rooms = new Map();
 const clients = new Map();
+const RESPAWN_MS = 3000;
+const START_LIVES = 5;
+
+function makeInitialPlayerState() {
+  return { deadUntil: 0, explosions: 0 };
+}
 
 function send(ws, type, payload) {
   ws.send(JSON.stringify({ type, payload }));
@@ -64,6 +71,64 @@ function broadcastRoomState(roomCode) {
     const player = room[slot];
     if (player?.ws && player.ws.readyState === 1) {
       send(player.ws, EVENT.ROOM_STATE, payload);
+    }
+  }
+}
+
+function broadcastGameState(room) {
+  if (!room.game) return;
+  const payload = {
+    phase: room.game.phase,
+    roomCode: room.code,
+    lives: room.game.lives,
+    gridSize: room.game.board.size,
+    mineCount: room.game.board.mines,
+    cells: boardToPublicCells(room.game.board),
+    players: {
+      host: { deadUntil: room.game.players.host.deadUntil },
+      guest: { deadUntil: room.game.players.guest.deadUntil }
+    }
+  };
+  for (const slot of ['host', 'guest']) {
+    const player = room[slot];
+    if (player?.ws && player.ws.readyState === 1) {
+      send(player.ws, EVENT.GAME_STATE, payload);
+    }
+  }
+}
+
+function broadcastGamePatch(room, actorSlot, changes = []) {
+  if (!room.game) return;
+  const payload = {
+    actor: actorSlot,
+    lives: room.game.lives,
+    phase: room.game.phase,
+    players: {
+      host: { deadUntil: room.game.players.host.deadUntil },
+      guest: { deadUntil: room.game.players.guest.deadUntil }
+    },
+    changes
+  };
+  for (const slot of ['host', 'guest']) {
+    const player = room[slot];
+    if (player?.ws && player.ws.readyState === 1) {
+      send(player.ws, EVENT.GAME_PATCH, payload);
+    }
+  }
+}
+
+function broadcastGameResult(room, outcome) {
+  const payload = {
+    outcome,
+    stats: {
+      elapsedSec: Math.round((Date.now() - room.game.startedAt) / 1000),
+      explosions: room.game.players.host.explosions + room.game.players.guest.explosions
+    }
+  };
+  for (const slot of ['host', 'guest']) {
+    const player = room[slot];
+    if (player?.ws && player.ws.readyState === 1) {
+      send(player.ws, EVENT.GAME_RESULT, payload);
     }
   }
 }
@@ -134,7 +199,8 @@ wss.on('connection', (ws) => {
         code,
         host: { ws, nickname: checked.data.nickname, ready: false },
         guest: null,
-        started: false
+        started: false,
+        game: null
       };
       rooms.set(code, room);
       clients.set(ws, { roomCode: code, slot: 'host', nickname: checked.data.nickname });
@@ -212,18 +278,124 @@ wss.on('connection', (ws) => {
         return;
       }
       room.started = true;
-      const statePayload = {
+      room.game = {
         phase: 'playing',
-        roomCode: room.code,
-        lives: 5,
-        gridSize: 16,
-        mineCount: 40
-      };
-      for (const slot of ['host', 'guest']) {
-        const player = room[slot];
-        if (player?.ws && player.ws.readyState === 1) {
-          send(player.ws, EVENT.GAME_STATE, statePayload);
+        lives: START_LIVES,
+        board: createBoard({ size: 16, mines: 40 }),
+        startedAt: Date.now(),
+        players: {
+          host: makeInitialPlayerState(),
+          guest: makeInitialPlayerState()
         }
+      };
+      broadcastGameState(room);
+      return;
+    }
+
+    if (type === EVENT.CELL_FLAG) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+      const client = clients.get(ws);
+      if (!client?.roomCode || !client.slot) {
+        send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
+        return;
+      }
+      const room = rooms.get(client.roomCode);
+      if (!room?.game || room.game.phase !== 'playing') {
+        send(ws, EVENT.ERROR, { code: 'GAME_NOT_ACTIVE', message: 'game is not active' });
+        return;
+      }
+      const now = Date.now();
+      if (room.game.players[client.slot].deadUntil > now) {
+        send(ws, EVENT.ERROR, { code: 'DEAD_LOCK', message: 'player is waiting for respawn' });
+        return;
+      }
+
+      const result = toggleFlag(room.game.board, checked.data.x, checked.data.y);
+      if (!result.ok) {
+        send(ws, EVENT.ERROR, { code: 'FLAG_REJECTED', message: result.reason });
+        return;
+      }
+      broadcastGamePatch(room, client.slot, [
+        {
+          type: 'cell',
+          x: result.cell.x,
+          y: result.cell.y,
+          flagged: result.cell.flagged
+        }
+      ]);
+      return;
+    }
+
+    if (type === EVENT.CELL_OPEN) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+      const client = clients.get(ws);
+      if (!client?.roomCode || !client.slot) {
+        send(ws, EVENT.ERROR, { code: 'NOT_IN_ROOM', message: 'join a room first' });
+        return;
+      }
+      const room = rooms.get(client.roomCode);
+      if (!room?.game || room.game.phase !== 'playing') {
+        send(ws, EVENT.ERROR, { code: 'GAME_NOT_ACTIVE', message: 'game is not active' });
+        return;
+      }
+      const now = Date.now();
+      const actorState = room.game.players[client.slot];
+      if (actorState.deadUntil > now) {
+        send(ws, EVENT.ERROR, { code: 'DEAD_LOCK', message: 'player is waiting for respawn' });
+        return;
+      }
+
+      const result = openCell(room.game.board, checked.data.x, checked.data.y);
+      if (!result.ok) {
+        send(ws, EVENT.ERROR, { code: 'OPEN_REJECTED', message: result.reason });
+        return;
+      }
+      if (result.kind === 'noop') {
+        return;
+      }
+
+      const changes = [
+        {
+          type: 'cell',
+          x: result.cell.x,
+          y: result.cell.y,
+          opened: result.cell.opened,
+          exploded: result.cell.exploded,
+          flagged: result.cell.flagged,
+          number: result.cell.opened && !result.cell.mine ? result.cell.number : null
+        }
+      ];
+
+      if (result.kind === 'mine') {
+        room.game.lives -= 1;
+        actorState.explosions += 1;
+        actorState.deadUntil = now + RESPAWN_MS;
+        changes.push({
+          type: 'player',
+          slot: client.slot,
+          deadUntil: actorState.deadUntil
+        });
+      }
+
+      if (result.won) {
+        room.game.phase = 'result';
+      }
+      if (room.game.lives <= 0) {
+        room.game.phase = 'result';
+      }
+
+      broadcastGamePatch(room, client.slot, changes);
+
+      if (room.game.phase === 'result') {
+        broadcastGameResult(room, room.game.lives <= 0 ? 'defeat' : 'victory');
       }
       return;
     }
