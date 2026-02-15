@@ -1,5 +1,7 @@
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
+import { EVENT } from '../shared/protocol.js';
+import { validateClientEvent } from '../shared/validation.js';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3000);
@@ -31,12 +33,142 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
+const rooms = new Map();
+const clients = new Map();
+
+function send(ws, type, payload) {
+  ws.send(JSON.stringify({ type, payload }));
+}
+
+function roomStatePayload(room) {
+  return {
+    roomCode: room.code,
+    host: {
+      name: room.host?.nickname ?? '-',
+      ready: room.host?.ready ?? false,
+      connected: Boolean(room.host?.ws && room.host.ws.readyState === 1)
+    },
+    guest: {
+      name: room.guest?.nickname ?? '-',
+      ready: room.guest?.ready ?? false,
+      connected: Boolean(room.guest?.ws && room.guest.ws.readyState === 1)
+    }
+  };
+}
+
+function broadcastRoomState(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  const payload = roomStatePayload(room);
+  for (const slot of ['host', 'guest']) {
+    const player = room[slot];
+    if (player?.ws && player.ws.readyState === 1) {
+      send(player.ws, EVENT.ROOM_STATE, payload);
+    }
+  }
+}
+
+function makeRoomCode() {
+  for (let i = 0; i < 10000; i += 1) {
+    const code = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+    if (!rooms.has(code)) return code;
+  }
+  return null;
+}
+
+function leaveRoom(ws) {
+  const client = clients.get(ws);
+  if (!client?.roomCode) return;
+  const room = rooms.get(client.roomCode);
+  if (!room) return;
+
+  if (client.slot === 'host') {
+    room.host = null;
+  } else if (client.slot === 'guest') {
+    room.guest = null;
+  }
+
+  clients.delete(ws);
+
+  if (!room.host && !room.guest) {
+    rooms.delete(room.code);
+    return;
+  }
+  broadcastRoomState(room.code);
+}
 
 wss.on('connection', (ws) => {
-  ws.send(JSON.stringify({ type: 'server:hello', payload: { ok: true } }));
+  clients.set(ws, { roomCode: null, slot: null, nickname: null });
+  send(ws, 'server:hello', { ok: true });
 
   ws.on('message', (raw) => {
-    ws.send(JSON.stringify({ type: 'server:echo', payload: String(raw) }));
+    let parsed;
+    try {
+      parsed = JSON.parse(String(raw));
+    } catch {
+      send(ws, EVENT.ERROR, { code: 'BAD_JSON', message: 'message must be valid json' });
+      return;
+    }
+
+    const type = parsed?.type;
+    const payload = parsed?.payload ?? {};
+    if (typeof type !== 'string') {
+      send(ws, EVENT.ERROR, { code: 'BAD_EVENT', message: 'type must be string' });
+      return;
+    }
+
+    if (type === EVENT.ROOM_CREATE) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+      const code = makeRoomCode();
+      if (!code) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_CODE_EXHAUSTED', message: 'unable to allocate room code' });
+        return;
+      }
+
+      leaveRoom(ws);
+      const room = {
+        code,
+        host: { ws, nickname: checked.data.nickname, ready: false },
+        guest: null
+      };
+      rooms.set(code, room);
+      clients.set(ws, { roomCode: code, slot: 'host', nickname: checked.data.nickname });
+      broadcastRoomState(code);
+      return;
+    }
+
+    if (type === EVENT.ROOM_JOIN) {
+      const checked = validateClientEvent(type, payload);
+      if (!checked.ok) {
+        send(ws, EVENT.ERROR, { code: 'INVALID_PAYLOAD', message: checked.error });
+        return;
+      }
+      const room = rooms.get(checked.data.roomCode);
+      if (!room) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room does not exist' });
+        return;
+      }
+      if (room.guest && room.guest.ws && room.guest.ws.readyState === 1) {
+        send(ws, EVENT.ERROR, { code: 'ROOM_FULL', message: 'room is already full' });
+        return;
+      }
+
+      leaveRoom(ws);
+      room.guest = { ws, nickname: checked.data.nickname, ready: false };
+      clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
+      broadcastRoomState(room.code);
+      return;
+    }
+
+    send(ws, EVENT.ERROR, { code: 'UNHANDLED_EVENT', message: `unhandled event: ${type}` });
+  });
+
+  ws.on('close', () => {
+    leaveRoom(ws);
   });
 });
 

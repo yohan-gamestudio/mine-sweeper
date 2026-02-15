@@ -118,3 +118,16 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `curl http://127.0.0.1:3000/health` returned OK JSON.
   - Playwright health page snapshot: `.playwright/snapshots/t3s1b-health.txt`.
   - Console errors: none (`.playwright-cli/console-2026-02-15T14-56-36-661Z.log`).
+
+## Progress Update 9 (Task 3 Step 2)
+- Implemented in-memory room lifecycle on server:
+  - `room:create` with 4-digit code generation and collision avoidance.
+  - `room:join` with room existence/full checks (max 2 players).
+  - room membership tracking and cleanup on socket close.
+  - room state broadcast via `room:state` payloads.
+  - structured error responses via `error` event.
+- Added ws lifecycle smoke test: `scripts/ws_room_smoke.mjs`.
+- Verification:
+  - `node scripts/ws_room_smoke.mjs` => `ws_room_smoke:ok room=...`.
+  - Playwright health snapshot: `.playwright/snapshots/t3s2-health.txt`.
+  - Console errors: none (`.playwright-cli/console-2026-02-15T14-58-28-384Z.log`).
