@@ -38,6 +38,7 @@ const rooms = new Map();
 const clients = new Map();
 const RESPAWN_MS = 3000;
 const START_LIVES = 5;
+const RECONNECT_GRACE_MS = 60000;
 
 function makeInitialPlayerState() {
   return { deadUntil: 0, explosions: 0 };
@@ -61,6 +62,13 @@ function roomStatePayload(room) {
       connected: Boolean(room.guest?.ws && room.guest.ws.readyState === 1)
     }
   };
+}
+
+function isReconnectable(player) {
+  if (!player) return false;
+  if (player.ws && player.ws.readyState === 1) return true;
+  if (!player.disconnectedAt) return false;
+  return Date.now() - player.disconnectedAt <= RECONNECT_GRACE_MS;
 }
 
 function broadcastRoomState(roomCode) {
@@ -141,26 +149,51 @@ function makeRoomCode() {
   return null;
 }
 
-function leaveRoom(ws) {
+function leaveRoom(ws, { disconnect = false } = {}) {
   const client = clients.get(ws);
   if (!client?.roomCode) return;
   const room = rooms.get(client.roomCode);
   if (!room) return;
 
   if (client.slot === 'host') {
-    room.host = null;
+    if (disconnect && room.host?.nickname === client.nickname) {
+      room.host.ws = null;
+      room.host.disconnectedAt = Date.now();
+    } else {
+      room.host = null;
+    }
   } else if (client.slot === 'guest') {
-    room.guest = null;
+    if (disconnect && room.guest?.nickname === client.nickname) {
+      room.guest.ws = null;
+      room.guest.disconnectedAt = Date.now();
+    } else {
+      room.guest = null;
+    }
   }
 
   clients.delete(ws);
 
-  if (!room.host && !room.guest) {
+  if (!isReconnectable(room.host) && !isReconnectable(room.guest)) {
     rooms.delete(room.code);
     return;
   }
   broadcastRoomState(room.code);
 }
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    for (const slot of ['host', 'guest']) {
+      const player = room[slot];
+      if (player && !player.ws && player.disconnectedAt && now - player.disconnectedAt > RECONNECT_GRACE_MS) {
+        room[slot] = null;
+      }
+    }
+    if (!isReconnectable(room.host) && !isReconnectable(room.guest)) {
+      rooms.delete(room.code);
+    }
+  }
+}, 5000);
 
 wss.on('connection', (ws) => {
   clients.set(ws, { roomCode: null, slot: null, nickname: null });
@@ -197,7 +230,7 @@ wss.on('connection', (ws) => {
       leaveRoom(ws);
       const room = {
         code,
-        host: { ws, nickname: checked.data.nickname, ready: false },
+        host: { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 },
         guest: null,
         started: false,
         game: null
@@ -219,14 +252,25 @@ wss.on('connection', (ws) => {
         send(ws, EVENT.ERROR, { code: 'ROOM_NOT_FOUND', message: 'room does not exist' });
         return;
       }
-      if (room.guest && room.guest.ws && room.guest.ws.readyState === 1) {
+
+      leaveRoom(ws);
+
+      if (room.host?.nickname === checked.data.nickname && !room.host.ws && isReconnectable(room.host)) {
+        room.host.ws = ws;
+        room.host.disconnectedAt = 0;
+        clients.set(ws, { roomCode: room.code, slot: 'host', nickname: checked.data.nickname });
+      } else if (room.guest?.nickname === checked.data.nickname && !room.guest.ws && isReconnectable(room.guest)) {
+        room.guest.ws = ws;
+        room.guest.disconnectedAt = 0;
+        clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
+      } else if (!room.guest || !isReconnectable(room.guest)) {
+        room.guest = { ws, nickname: checked.data.nickname, ready: false, disconnectedAt: 0 };
+        clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
+      } else {
         send(ws, EVENT.ERROR, { code: 'ROOM_FULL', message: 'room is already full' });
         return;
       }
 
-      leaveRoom(ws);
-      room.guest = { ws, nickname: checked.data.nickname, ready: false };
-      clients.set(ws, { roomCode: room.code, slot: 'guest', nickname: checked.data.nickname });
       broadcastRoomState(room.code);
       if (room.started && room.game) {
         send(ws, EVENT.GAME_STATE, {
@@ -449,7 +493,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    leaveRoom(ws);
+    leaveRoom(ws, { disconnect: true });
   });
 });
 

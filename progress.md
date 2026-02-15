@@ -229,3 +229,15 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_chat_smoke.mjs` => `ws_chat_smoke:ok room=...`.
   - Playwright health snapshot: `.playwright/snapshots/t6s1-health.txt`.
   - Console errors: none (`.playwright-cli/console-2026-02-15T15-18-42-965Z.log`).
+
+## Progress Update 18 (Task 6 Step 2)
+- Implemented reconnect-window recovery (60s) end-to-end:
+  - Server keeps disconnected slot metadata (`disconnectedAt`) and allows same `nickname + roomCode` reclaim within 60s.
+  - Added periodic cleanup for expired disconnected slots.
+  - Client now auto-rejoins on websocket reconnect while in lobby/playing using saved nickname + room code.
+  - Reconnect retry loop now uses a stable 5s retry timer (`reconnectRetryAt`) instead of frame-modulo timing.
+- Added smoke test: `scripts/ws_reconnect_smoke.mjs`.
+- Verification:
+  - `node scripts/ws_reconnect_smoke.mjs` => `ws_reconnect_smoke:ok room=...`.
+  - Regression: `node scripts/ws_chat_smoke.mjs` => `ws_chat_smoke:ok room=...`.
+  - Playwright CLI artifacts: `.playwright/snapshots/t6s2-entry.txt`, `.playwright/artifacts/t6s2-entry.png`.

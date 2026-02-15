@@ -277,6 +277,7 @@ const state = {
 };
 
 let socket = null;
+let reconnectRetryAt = 0;
 const pendingSocketMessages = [];
 
 function setConnState(next) {
@@ -293,12 +294,22 @@ function connectSocket(force = false) {
   setConnState('CONNECTING');
   socket = new WebSocket(WS_URL);
   socket.addEventListener('open', () => {
+    const shouldResume = state.screen !== 'entry' && /^[0-9]{4}$/.test(state.roomCode);
     setConnState('CONNECTED');
     state.reconnectLeft = 0;
     state.reconnectAt = 0;
+    reconnectRetryAt = 0;
     while (pendingSocketMessages.length > 0) {
       const message = pendingSocketMessages.shift();
       socket.send(JSON.stringify(message));
+    }
+    if (shouldResume) {
+      socket.send(
+        JSON.stringify({
+          type: EVENT.ROOM_JOIN,
+          payload: { nickname: state.nickname, roomCode: state.roomCode }
+        })
+      );
     }
   });
   socket.addEventListener('message', (event) => {
@@ -372,12 +383,14 @@ function connectSocket(force = false) {
     setConnState('RECONNECTING');
     state.reconnectAt = Date.now() + 60000;
     state.reconnectLeft = 60;
+    reconnectRetryAt = Date.now();
   });
   socket.addEventListener('error', () => {
     if (state.screen !== 'entry') {
       setConnState('RECONNECTING');
       state.reconnectAt = Date.now() + 60000;
       state.reconnectLeft = 60;
+      reconnectRetryAt = Date.now();
     }
   });
 }
@@ -1190,11 +1203,13 @@ function step(dt) {
     keys.clear();
   }
   if (state.connState === 'RECONNECTING') {
+    const now = Date.now();
     const leftMs = Math.max(0, state.reconnectAt - Date.now());
     state.reconnectLeft = Math.ceil(leftMs / 1000);
     if (leftMs <= 0) {
       setConnState('DISCONNECTED');
-    } else if ((!socket || socket.readyState >= 2) && leftMs % 5000 < 17) {
+    } else if ((!socket || socket.readyState >= 2) && now >= reconnectRetryAt) {
+      reconnectRetryAt = now + 5000;
       connectSocket(true);
     }
   }
