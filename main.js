@@ -257,6 +257,8 @@ const state = {
   hostReady: false,
   guestName: 'Guest',
   guestReady: false,
+  mySlot: 'host',
+  authoritative: false,
   teammatePos: new THREE.Vector2(1, 1),
   cells: [],
   cellsFlat: []
@@ -303,15 +305,33 @@ function connectSocket(force = false) {
       state.guestName = payload.guest?.name ?? '-';
       state.guestReady = Boolean(payload.guest?.ready);
       if (state.nickname === state.hostName) {
+        state.mySlot = 'host';
         state.localReady = state.hostReady;
       } else if (state.nickname === state.guestName) {
+        state.mySlot = 'guest';
         state.localReady = state.guestReady;
       }
       renderScreenState();
       return;
     }
     if (type === EVENT.GAME_STATE) {
-      startLocalMatch();
+      resetGame();
+      applyServerSnapshot(payload);
+      renderScreenState();
+      safeRequestPointerLock();
+      return;
+    }
+    if (type === EVENT.GAME_PATCH) {
+      applyServerGamePatch(payload);
+      return;
+    }
+    if (type === EVENT.GAME_RESULT) {
+      state.mode = payload?.outcome === 'victory' ? 'won' : 'lost';
+      state.screen = 'result';
+      resultTitle.textContent = payload?.outcome === 'victory' ? 'VICTORY' : 'DEFEAT';
+      resultSub.textContent = `Elapsed ${payload?.stats?.elapsedSec ?? 0}s / Explosions ${payload?.stats?.explosions ?? 0}`;
+      renderScreenState();
+      document.exitPointerLock?.();
       return;
     }
     if (type === EVENT.ERROR) {
@@ -459,6 +479,7 @@ function buildBoard() {
 function resetGame() {
   state.mode = 'playing';
   state.screen = 'playing';
+  state.authoritative = false;
   state.mapOpen = false;
   state.lives = MAX_LIVES;
   state.dead = false;
@@ -567,6 +588,62 @@ function applyCellVisual(cell) {
   } else {
     cell.cap.visible = true;
     cell.base.material = baseMaterial;
+  }
+}
+
+function applyServerCellPatch(patch) {
+  if (typeof patch?.x !== 'number' || typeof patch?.y !== 'number') return;
+  const cell = state.cells?.[patch.y]?.[patch.x];
+  if (!cell) return;
+  if (typeof patch.flagged === 'boolean') cell.flagged = patch.flagged;
+  if (typeof patch.opened === 'boolean') cell.opened = patch.opened;
+  if (typeof patch.exploded === 'boolean') cell.exploded = patch.exploded;
+  if (typeof patch.number === 'number') cell.number = patch.number;
+  if (cell.exploded) cell.mine = true;
+  applyCellVisual(cell);
+}
+
+function applyServerSnapshot(payload) {
+  if (!payload) return;
+  state.authoritative = true;
+  state.mode = payload.phase === 'playing' ? 'playing' : state.mode;
+  if (typeof payload.lives === 'number') state.lives = payload.lives;
+  if (Array.isArray(payload.cells)) {
+    for (const row of payload.cells) {
+      if (!Array.isArray(row)) continue;
+      for (const c of row) {
+        applyServerCellPatch(c);
+      }
+    }
+  }
+  const myPlayer = payload.players?.[state.mySlot];
+  if (myPlayer?.deadUntil && myPlayer.deadUntil > Date.now()) {
+    state.dead = true;
+    state.deadLeft = (myPlayer.deadUntil - Date.now()) / 1000;
+    state.deadPos.copy(camera.position);
+  } else {
+    state.dead = false;
+    state.deadLeft = 0;
+  }
+}
+
+function applyServerGamePatch(payload) {
+  if (!payload) return;
+  if (typeof payload.lives === 'number') state.lives = payload.lives;
+  if (Array.isArray(payload.changes)) {
+    for (const change of payload.changes) {
+      if (change.type === 'cell') {
+        applyServerCellPatch(change);
+      }
+      if (change.type === 'player' && change.slot === state.mySlot && change.deadUntil > Date.now()) {
+        state.dead = true;
+        state.deadLeft = (change.deadUntil - Date.now()) / 1000;
+        state.deadPos.copy(camera.position);
+      }
+    }
+  }
+  if (payload.phase === 'result') {
+    state.mode = 'paused';
   }
 }
 
@@ -720,10 +797,18 @@ function onMouseDown(event) {
   if (event.button === 0) {
     const intent = sendLocalIntent(EVENT.CELL_OPEN, { x: cell.x, y: cell.y });
     if (!intent) return;
+    if (state.authoritative) {
+      sendSocketEvent(EVENT.CELL_OPEN, intent);
+      return;
+    }
     openCell(cell);
   } else if (event.button === 2) {
     const intent = sendLocalIntent(EVENT.CELL_FLAG, { x: cell.x, y: cell.y, flagged: !cell.flagged });
     if (!intent) return;
+    if (state.authoritative) {
+      sendSocketEvent(EVENT.CELL_FLAG, intent);
+      return;
+    }
     toggleFlag(cell);
   }
 }

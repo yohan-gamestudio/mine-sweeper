@@ -204,3 +204,17 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - host/guest both show same room code and synchronized lobby names/ready states.
   - snapshots: `t5s2-guest-lobby.txt`, `t5s2-host-after-guest.txt`.
   - console errors: none (`...24-278Z.log`, `...24-329Z.log`).
+
+## Progress Update 16 (Task 5 Step 3)
+- Routed gameplay interactions through server intents:
+  - In authoritative mode, click inputs send `cell:open` / `cell:flag` only.
+  - Added server snapshot/patch application on client:
+    - `game:state` initializes visual board state.
+    - `game:patch` applies cell/player updates incrementally.
+    - `game:result` moves to result screen.
+- Added slot awareness (`host`/`guest`) from `room:state` for player-specific dead-lock display.
+- Verification (2 sessions):
+  - host/guest both joined same room and started game.
+  - host flag action produced synced state (`board.flagged: 1`) on both clients.
+  - state outputs: `.playwright/snapshots/t5s3-host-state.txt`, `.playwright/snapshots/t5s3-guest-state.txt`.
+  - console errors: none (`...41-801Z.log`, `...41-846Z.log`).
