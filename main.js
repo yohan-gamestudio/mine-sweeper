@@ -18,18 +18,34 @@ app.innerHTML = `
   <div id="hud">
     <div>Lives: <span id="hud-lives" class="value"></span></div>
     <div>Status: <span id="hud-status" class="value"></span></div>
-    <div>Room: <span class="value">SINGLE</span></div>
-    <div>Connection: <span class="value">SINGLE</span></div>
+    <div>Room: <span id="hud-room" class="value">----</span></div>
+    <div>Connection: <span id="hud-conn" class="value">LOCAL</span></div>
     <div id="hud-tip">Click to lock pointer</div>
   </div>
   <div id="crosshair">+</div>
   <div id="overlay">
-    <div id="start-card">
-      <h1>Single Test: 3D Minesweeper</h1>
-      <p>Move: WASD, Jump: Space, Sprint: Shift</p>
-      <p>Open: Left Click, Flag: Right Click</p>
-      <p>Map: Hold Tab, Fullscreen: F</p>
-      <p>Click anywhere to start</p>
+    <div id="entry-card">
+      <h1>3D Co-op Minesweeper</h1>
+      <p>Nickname (2-12 chars)</p>
+      <p><input id="nickname-input" maxlength="12" value="Player1" /></p>
+      <p><button id="btn-create">Create Room</button></p>
+      <p>Join by room code</p>
+      <p>
+        <input id="join-code-input" maxlength="4" placeholder="1234" />
+        <button id="btn-join">Join</button>
+      </p>
+      <p id="entry-error"></p>
+    </div>
+    <div id="lobby-card" class="hidden">
+      <h1>Room Lobby</h1>
+      <p>Room Code: <strong id="lobby-room-code">----</strong></p>
+      <p>Host: <span id="lobby-host-name">-</span> (<span id="lobby-host-ready">Not Ready</span>)</p>
+      <p>Guest: <span id="lobby-guest-name">Teammate</span> (<span id="lobby-guest-ready">Ready</span>)</p>
+      <p>
+        <button id="btn-ready">Ready</button>
+        <button id="btn-start" disabled>Start</button>
+        <button id="btn-leave">Leave</button>
+      </p>
     </div>
     <div id="result-card" class="hidden">
       <h1 id="result-title"></h1>
@@ -46,8 +62,23 @@ app.innerHTML = `
 
 const hudLives = document.querySelector('#hud-lives');
 const hudStatus = document.querySelector('#hud-status');
+const hudRoom = document.querySelector('#hud-room');
+const hudConn = document.querySelector('#hud-conn');
 const hudTip = document.querySelector('#hud-tip');
-const startCard = document.querySelector('#start-card');
+const entryCard = document.querySelector('#entry-card');
+const lobbyCard = document.querySelector('#lobby-card');
+const nicknameInput = document.querySelector('#nickname-input');
+const joinCodeInput = document.querySelector('#join-code-input');
+const entryError = document.querySelector('#entry-error');
+const lobbyRoomCode = document.querySelector('#lobby-room-code');
+const lobbyHostName = document.querySelector('#lobby-host-name');
+const lobbyHostReady = document.querySelector('#lobby-host-ready');
+const lobbyGuestReady = document.querySelector('#lobby-guest-ready');
+const btnCreate = document.querySelector('#btn-create');
+const btnJoin = document.querySelector('#btn-join');
+const btnReady = document.querySelector('#btn-ready');
+const btnStart = document.querySelector('#btn-start');
+const btnLeave = document.querySelector('#btn-leave');
 const resultCard = document.querySelector('#result-card');
 const resultTitle = document.querySelector('#result-title');
 const resultSub = document.querySelector('#result-sub');
@@ -188,7 +219,8 @@ const teammateAvatar = createTeammateAvatar();
 scene.add(teammateAvatar.group);
 
 const state = {
-  mode: 'start',
+  screen: 'entry',
+  mode: 'paused',
   mapOpen: false,
   pointerLocked: false,
   yaw: 0,
@@ -204,6 +236,9 @@ const state = {
   totalSafe: GRID_SIZE * GRID_SIZE - MINE_COUNT,
   startTimeMs: 0,
   elapsedMs: 0,
+  nickname: 'Player1',
+  roomCode: '----',
+  localReady: false,
   teammatePos: new THREE.Vector2(1, 1),
   cells: [],
   cellsFlat: []
@@ -317,6 +352,7 @@ function buildBoard() {
 
 function resetGame() {
   state.mode = 'playing';
+  state.screen = 'playing';
   state.mapOpen = false;
   state.lives = MAX_LIVES;
   state.dead = false;
@@ -335,14 +371,21 @@ function resetGame() {
   state.yaw = 0;
   state.pitch = 0;
   resultCard.classList.add('hidden');
+  entryCard.classList.add('hidden');
+  lobbyCard.classList.add('hidden');
   mapWrap.classList.add('hidden');
 }
 
 resetGame();
-state.mode = 'start';
+state.mode = 'paused';
+state.screen = 'entry';
+entryCard.classList.remove('hidden');
+lobbyCard.classList.add('hidden');
 
 function setStatusText() {
   hudLives.textContent = `${state.lives}`;
+  hudRoom.textContent = state.roomCode;
+  hudConn.textContent = 'LOCAL';
   if (state.mode === 'won') {
     hudStatus.textContent = 'WON';
   } else if (state.mode === 'lost') {
@@ -358,12 +401,25 @@ const keys = new Set();
 
 function setPointerLockText() {
   if (!state.pointerLocked) {
-    hudTip.textContent = 'Click to lock pointer';
+    hudTip.textContent = state.screen === 'playing' ? 'Click to lock pointer' : 'Configure room in overlay';
   } else if (state.mapOpen) {
     hudTip.textContent = 'Map open: movement allowed, look locked';
   } else {
     hudTip.textContent = `LMB open | RMB flag | Tab map | Lives ${state.lives}`;
   }
+}
+
+function renderScreenState() {
+  entryCard.classList.toggle('hidden', state.screen !== 'entry');
+  lobbyCard.classList.toggle('hidden', state.screen !== 'lobby');
+  resultCard.classList.toggle('hidden', state.screen !== 'result');
+
+  lobbyRoomCode.textContent = state.roomCode;
+  lobbyHostName.textContent = state.nickname;
+  lobbyHostReady.textContent = state.localReady ? 'Ready' : 'Not Ready';
+  lobbyGuestReady.textContent = 'Ready';
+  btnReady.textContent = state.localReady ? 'Unready' : 'Ready';
+  btnStart.disabled = !state.localReady;
 }
 
 function safeRequestPointerLock() {
@@ -436,10 +492,11 @@ function openCell(cell) {
 
     if (state.lives <= 0) {
       state.mode = 'lost';
+      state.screen = 'result';
       state.dead = false;
       resultTitle.textContent = 'DEFEAT';
       resultSub.textContent = `Lives exhausted. Explosions: ${MAX_LIVES}`;
-      resultCard.classList.remove('hidden');
+      renderScreenState();
       document.exitPointerLock?.();
     }
     return;
@@ -453,10 +510,11 @@ function openCell(cell) {
 
   if (state.safeOpened >= state.totalSafe) {
     state.mode = 'won';
+    state.screen = 'result';
     const seconds = Math.round((performance.now() - state.startTimeMs) / 1000);
     resultTitle.textContent = 'VICTORY';
     resultSub.textContent = `Cleared all safe cells in ${seconds}s.`;
-    resultCard.classList.remove('hidden');
+    renderScreenState();
     document.exitPointerLock?.();
   }
 }
@@ -493,14 +551,23 @@ function holdMap(open) {
   setPointerLockText();
 }
 
+function randomRoomCode() {
+  return String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+}
+
+function validNickname(value) {
+  const name = value.trim();
+  return name.length >= 2 && name.length <= 12;
+}
+
+function startLocalMatch() {
+  resetGame();
+  renderScreenState();
+  safeRequestPointerLock();
+}
+
 function onMouseDown(event) {
-  if (state.mode === 'start') {
-    startCard.classList.add('hidden');
-    state.mode = 'playing';
-    state.startTimeMs = performance.now();
-    safeRequestPointerLock();
-    return;
-  }
+  if (state.screen !== 'playing') return;
 
   if (state.mode === 'won' || state.mode === 'lost') {
     return;
@@ -528,6 +595,55 @@ function onMouseMove(event) {
   state.pitch = Math.max(-1.47, Math.min(1.47, state.pitch));
 }
 
+btnCreate.addEventListener('click', () => {
+  const nickname = nicknameInput.value.trim();
+  if (!validNickname(nickname)) {
+    entryError.textContent = 'Nickname must be 2 to 12 characters.';
+    return;
+  }
+  state.nickname = nickname;
+  state.roomCode = randomRoomCode();
+  state.localReady = false;
+  entryError.textContent = '';
+  state.screen = 'lobby';
+  renderScreenState();
+});
+
+btnJoin.addEventListener('click', () => {
+  const nickname = nicknameInput.value.trim();
+  const code = joinCodeInput.value.trim();
+  if (!validNickname(nickname)) {
+    entryError.textContent = 'Nickname must be 2 to 12 characters.';
+    return;
+  }
+  if (!/^[0-9]{4}$/.test(code)) {
+    entryError.textContent = 'Room code must be 4 digits.';
+    return;
+  }
+  state.nickname = nickname;
+  state.roomCode = code;
+  state.localReady = false;
+  entryError.textContent = '';
+  state.screen = 'lobby';
+  renderScreenState();
+});
+
+btnReady.addEventListener('click', () => {
+  state.localReady = !state.localReady;
+  renderScreenState();
+});
+
+btnStart.addEventListener('click', () => {
+  if (!state.localReady) return;
+  startLocalMatch();
+});
+
+btnLeave.addEventListener('click', () => {
+  state.screen = 'entry';
+  state.localReady = false;
+  renderScreenState();
+});
+
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('mousedown', onMouseDown);
 window.addEventListener('mousemove', onMouseMove);
@@ -537,6 +653,11 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 window.addEventListener('keydown', (e) => {
+  if (state.screen === 'result' && e.code === 'KeyR') {
+    startLocalMatch();
+    return;
+  }
+  if (state.screen !== 'playing') return;
   if (e.code === 'Tab') {
     e.preventDefault();
     holdMap(true);
@@ -544,13 +665,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') {
     toggleFullscreen();
   }
-  if (e.code === 'KeyR' && (state.mode === 'won' || state.mode === 'lost')) {
-    resetGame();
-    safeRequestPointerLock();
-  }
   keys.add(e.code);
 });
 window.addEventListener('keyup', (e) => {
+  if (state.screen !== 'playing') return;
   if (e.code === 'Tab') {
     holdMap(false);
   }
@@ -561,6 +679,8 @@ document.addEventListener('pointerlockchange', () => {
   state.pointerLocked = document.pointerLockElement === renderer.domElement;
   setPointerLockText();
 });
+
+renderScreenState();
 
 function drawMap() {
   if (!state.mapOpen || state.mode !== 'playing') return;

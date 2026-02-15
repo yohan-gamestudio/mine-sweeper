@@ -38,3 +38,17 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
 - `playwright-cli` interaction coverage for hold-Tab map behavior is limited in current command sequence (press-only, no hold-state capture).
 - Audio cues are not implemented yet (explosion/flag/footstep/jump placeholders only in scope).
 - No explicit in-world number rendering (intentional for current single-test slice).
+
+## Progress Update 3
+- Added `IMPLEMENTATION_PLAN.md` with PRD-driven task/step structure.
+- Implemented Task 1 Step 1 (frontend screen state machine):
+  - Added screen states: `entry`, `lobby`, `playing`, `result`.
+  - Added entry and lobby overlays with minimal local flow controls.
+  - Bound HUD room/connection fields to local state.
+  - Added mode guard so in-game controls only run in `playing` screen.
+- Playwright CLI verification:
+  - entry snapshot: `.playwright/snapshots/t1s1c-entry.txt`
+  - lobby snapshot: `.playwright/snapshots/t1s1c-lobby.txt`
+  - playing snapshot: `.playwright/snapshots/t1s1c-playing.txt`
+  - screenshot: `.playwright/artifacts/t1s1c-playing.png`
+  - console errors: none (`.playwright-cli/console-2026-02-15T14-42-54-474Z.log`).

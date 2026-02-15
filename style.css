@@ -58,7 +58,8 @@ body {
   pointer-events: none;
 }
 
-#start-card,
+#entry-card,
+#lobby-card,
 #result-card {
   background: rgba(10, 16, 23, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.24);
@@ -67,19 +68,55 @@ body {
   padding: 16px 18px;
   width: min(92vw, 440px);
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
 }
 
-#start-card h1,
+#entry-card h1,
+#lobby-card h1,
 #result-card h1 {
   margin: 0 0 10px;
   font-size: 20px;
 }
 
-#start-card p,
+#entry-card p,
+#lobby-card p,
 #result-card p {
   margin: 6px 0;
   opacity: 0.94;
   font-size: 14px;
+}
+
+#entry-card input,
+#lobby-card input {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #eef5ff;
+  padding: 7px 9px;
+  outline: none;
+  min-width: 150px;
+}
+
+#entry-card button,
+#lobby-card button {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(75, 160, 102, 0.85);
+  color: #f6fff9;
+  padding: 7px 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#entry-card button[disabled],
+#lobby-card button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+#entry-error {
+  color: #ff9f90;
+  min-height: 18px;
 }
 
 .hidden {
