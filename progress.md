@@ -290,3 +290,13 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
 - Verification:
   - `scripts/playwright_smoke_scenarios.sh` => `playwright_smoke_scenarios:ok room=...`.
   - snapshots generated under `.playwright/snapshots/t7s2-*`.
+
+## Progress Update 23 (Task 7 Step 3)
+- Added `README.md` multiplayer runbook:
+  - stack, install, dev run commands, controls, flow, verification scripts, project layout.
+- Clean-install/run verification:
+  - `npm ci` (fresh dependency install)
+  - `npm run build` (pass)
+  - server/client dev boot + curl checks:
+    - `http://127.0.0.1:3000/health` (OK)
+    - `http://127.0.0.1:5173` (HTTP 200)
