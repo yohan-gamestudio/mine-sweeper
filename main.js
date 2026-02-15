@@ -1446,20 +1446,43 @@ function updateFx(dt) {
   }
 }
 
-function updateRemoteAvatars() {
+function updateRemoteAvatars(dt) {
   for (const [slot, avatar] of remoteAvatars.entries()) {
     const pos = state.remotePlayers[slot];
     if (!pos) continue;
+    if (!Number.isFinite(pos.renderX)) pos.renderX = pos.targetX ?? 0;
+    if (!Number.isFinite(pos.renderZ)) pos.renderZ = pos.targetZ ?? 0;
+    if (!Number.isFinite(pos.renderYaw)) pos.renderYaw = pos.targetYaw ?? 0;
+    if (!Number.isFinite(pos.animPhase)) pos.animPhase = 0;
+    if (!Number.isFinite(pos.moveSpeed)) pos.moveSpeed = 0;
+
+    const prevX = pos.renderX;
+    const prevZ = pos.renderZ;
     const smooth = 0.18;
     pos.renderX += ((pos.targetX ?? pos.renderX) - pos.renderX) * smooth;
     pos.renderZ += ((pos.targetZ ?? pos.renderZ) - pos.renderZ) * smooth;
     pos.renderYaw = lerpAngle(pos.renderYaw ?? 0, pos.targetYaw ?? 0, smooth);
+
+    const movedDist = Math.hypot(pos.renderX - prevX, pos.renderZ - prevZ);
+    const instantSpeed = dt > 0 ? movedDist / dt : 0;
+    pos.moveSpeed += (instantSpeed - pos.moveSpeed) * 0.24;
+
+    const walkFactor = Math.min(1, pos.moveSpeed / 2.3);
+    const isWalking = walkFactor > 0.08;
+    if (isWalking) {
+      pos.animPhase += dt * (5.5 + walkFactor * 5.5);
+    }
+
     avatar.group.position.set(pos.renderX, 0, pos.renderZ);
-    const swing = Math.sin((state.elapsedMs / 1000) * 3.5 + ROOM_SLOTS.indexOf(slot)) * 0.06;
-    avatar.legLeft.rotation.x = swing;
-    avatar.legRight.rotation.x = -swing;
-    avatar.armLeft.rotation.x = -swing * 0.9;
-    avatar.armRight.rotation.x = swing * 0.9;
+
+    const swingAmp = 0.55 * walkFactor;
+    const swing = Math.sin(pos.animPhase) * swingAmp;
+    const bob = Math.abs(Math.sin(pos.animPhase * 2)) * 0.05 * walkFactor;
+    avatar.legLeft.rotation.x += (swing - avatar.legLeft.rotation.x) * 0.35;
+    avatar.legRight.rotation.x += (-swing - avatar.legRight.rotation.x) * 0.35;
+    avatar.armLeft.rotation.x += ((-swing * 0.85) - avatar.armLeft.rotation.x) * 0.35;
+    avatar.armRight.rotation.x += ((swing * 0.85) - avatar.armRight.rotation.x) * 0.35;
+    avatar.group.position.y = bob;
     avatar.group.rotation.y = pos.renderYaw ?? 0;
     avatar.nameTag.quaternion.copy(camera.quaternion);
   }
@@ -1487,7 +1510,7 @@ function step(dt) {
   updateDead(dt);
   updateMovement(dt);
   updateFx(dt);
-  updateRemoteAvatars();
+  updateRemoteAvatars(dt);
 
   camera.rotation.order = 'YXZ';
   camera.rotation.y = state.yaw;
