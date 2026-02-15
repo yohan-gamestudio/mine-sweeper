@@ -79,7 +79,7 @@ const boardMax = worldSize / 2;
 
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(worldSize + 28, worldSize + 28),
-  new THREE.MeshStandardMaterial({ color: 0x7db56c, roughness: 0.92 })
+  new THREE.MeshStandardMaterial({ color: 0x78b55a, roughness: 0.95 })
 );
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
@@ -87,8 +87,8 @@ scene.add(ground);
 const boardGroup = new THREE.Group();
 scene.add(boardGroup);
 
-const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x695548, roughness: 0.86 });
-const safeOpenedMaterial = new THREE.MeshStandardMaterial({ color: 0x9da9b2, roughness: 0.84 });
+const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x5f8f43, roughness: 0.9 });
+const safeOpenedMaterial = new THREE.MeshStandardMaterial({ color: 0xa8c781, roughness: 0.84 });
 const explodedMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1.0 });
 const mineCapMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4046, roughness: 0.68, metalness: 0.16 });
 const flagPoleMaterial = new THREE.MeshStandardMaterial({ color: 0xc7c7c7, roughness: 0.5 });
@@ -509,6 +509,14 @@ function drawMap() {
       } else if (c.opened) {
         mapCtx.fillStyle = '#8f98a3';
         mapCtx.fillRect(px, py, cellPx, cellPx);
+        if (!c.mine && c.number > 0) {
+          const palette = ['#3a7bff', '#2f9c59', '#dd4d3d', '#7a49ff', '#a63f26', '#1f9aa6', '#2a2a2a', '#666666'];
+          mapCtx.fillStyle = palette[Math.min(7, c.number - 1)];
+          mapCtx.font = `${Math.floor(cellPx * 0.5)}px "IBM Plex Sans", sans-serif`;
+          mapCtx.textAlign = 'center';
+          mapCtx.textBaseline = 'middle';
+          mapCtx.fillText(String(c.number), px + cellPx / 2, py + cellPx / 2);
+        }
       } else {
         mapCtx.fillStyle = '#47515e';
         mapCtx.fillRect(px, py, cellPx, cellPx);
