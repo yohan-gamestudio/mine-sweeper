@@ -52,8 +52,13 @@ send(host, EVENT.GAME_START, {});
 await waitFor(host, (m) => m.type === EVENT.GAME_STATE);
 await waitFor(guest, (m) => m.type === EVENT.GAME_STATE);
 
+const disconnectedRoomState = waitFor(
+  host,
+  (m) => m.type === EVENT.ROOM_STATE && m.payload.guest?.connected === false,
+  4500
+);
 guest.close();
-await new Promise((resolve) => setTimeout(resolve, 150));
+await disconnectedRoomState;
 
 guest = await connect();
 await waitFor(guest, (m) => m.type === 'server:hello');

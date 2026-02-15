@@ -38,7 +38,8 @@ const rooms = new Map();
 const clients = new Map();
 const RESPAWN_MS = 3000;
 const START_LIVES = 5;
-const RECONNECT_GRACE_MS = 60000;
+const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS || 60000);
+const ROOM_SWEEP_MS = Number(process.env.ROOM_SWEEP_MS || 5000);
 
 function makeInitialPlayerState() {
   return { deadUntil: 0, explosions: 0 };
@@ -183,17 +184,23 @@ function leaveRoom(ws, { disconnect = false } = {}) {
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
+    let changed = false;
     for (const slot of ['host', 'guest']) {
       const player = room[slot];
       if (player && !player.ws && player.disconnectedAt && now - player.disconnectedAt > RECONNECT_GRACE_MS) {
         room[slot] = null;
+        changed = true;
       }
     }
     if (!isReconnectable(room.host) && !isReconnectable(room.guest)) {
       rooms.delete(room.code);
+      continue;
+    }
+    if (changed) {
+      broadcastRoomState(room.code);
     }
   }
-}, 5000);
+}, ROOM_SWEEP_MS);
 
 wss.on('connection', (ws) => {
   clients.set(ws, { roomCode: null, slot: null, nickname: null });

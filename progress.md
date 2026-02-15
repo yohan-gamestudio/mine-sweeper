@@ -241,3 +241,18 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_reconnect_smoke.mjs` => `ws_reconnect_smoke:ok room=...`.
   - Regression: `node scripts/ws_chat_smoke.mjs` => `ws_chat_smoke:ok room=...`.
   - Playwright CLI artifacts: `.playwright/snapshots/t6s2-entry.txt`, `.playwright/artifacts/t6s2-entry.png`.
+
+## Progress Update 19 (Task 6 Step 3)
+- Implemented timeout-based solo continuation support hardening:
+  - Server sweep loop now broadcasts updated `room:state` when an expired disconnected slot is removed.
+  - Added env-driven timing knobs for verification/ops:
+    - `RECONNECT_GRACE_MS` (default 60000)
+    - `ROOM_SWEEP_MS` (default 5000)
+- Added timeout solo smoke test: `scripts/ws_solo_timeout_smoke.mjs`.
+  - Spins up an isolated ws server with short grace/sweep intervals.
+  - Verifies teammate slot expires after timeout.
+  - Verifies remaining player still receives `game:patch` (can continue solo).
+- Verification:
+  - `node scripts/ws_solo_timeout_smoke.mjs` => `ws_solo_timeout_smoke:ok room=...`.
+  - Regression: `node scripts/ws_reconnect_smoke.mjs` => `ws_reconnect_smoke:ok room=...`.
+  - Playwright CLI artifacts: `.playwright/snapshots/t6s3-entry.txt`, `.playwright/artifacts/t6s3-entry.png`.
