@@ -178,3 +178,14 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_patch_consistency_smoke.mjs` => `ws_patch_consistency_smoke:ok room=...`.
   - Playwright health snapshot: `.playwright/snapshots/t4s3-health.txt`.
   - Console errors: none (`.playwright-cli/console-2026-02-15T15-04-54-443Z.log`).
+
+## Progress Update 14 (Task 5 Step 1)
+- Added client connection/session state handling:
+  - websocket bootstrap (`WS_URL`) and socket lifecycle management.
+  - HUD connection state: `LOCAL`, `CONNECTING`, `CONNECTED`, `RECONNECT n s`, `DISCONNECTED`.
+  - reconnect window timer (60s) with periodic reconnect attempt.
+  - leaving lobby closes socket and resets local connection state.
+- Verification:
+  - snapshots show transitions: `LOCAL` -> `CONNECTED` -> `RECONNECT 60s`.
+  - stable connected check: `.playwright/snapshots/t5s1c-connected.txt`.
+  - console errors for stable connected run: none (`.playwright-cli/console-2026-02-15T15-09-26-604Z.log`).

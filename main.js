@@ -15,6 +15,7 @@ const SPRINT_SPEED = 7;
 const JUMP_VELOCITY = 6;
 const GRAVITY = 20;
 const PROTOCOL_EVENT_COUNT = Object.keys(EVENT).length;
+const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:3000/ws`;
 
 const app = document.querySelector('#app');
 app.innerHTML = `
@@ -245,6 +246,9 @@ const state = {
   totalSafe: GRID_SIZE * GRID_SIZE - MINE_COUNT,
   startTimeMs: 0,
   elapsedMs: 0,
+  connState: 'LOCAL',
+  reconnectLeft: 0,
+  reconnectAt: 0,
   nickname: 'Player1',
   roomCode: '----',
   localReady: false,
@@ -252,6 +256,44 @@ const state = {
   cells: [],
   cellsFlat: []
 };
+
+let socket = null;
+
+function setConnState(next) {
+  state.connState = next;
+}
+
+function connectSocket(force = false) {
+  if (socket && socket.readyState <= 1 && !force) return;
+  try {
+    socket?.close();
+  } catch {
+    // noop
+  }
+  setConnState('CONNECTING');
+  socket = new WebSocket(WS_URL);
+  socket.addEventListener('open', () => {
+    setConnState('CONNECTED');
+    state.reconnectLeft = 0;
+    state.reconnectAt = 0;
+  });
+  socket.addEventListener('close', () => {
+    if (state.screen === 'entry') {
+      setConnState('LOCAL');
+      return;
+    }
+    setConnState('RECONNECTING');
+    state.reconnectAt = Date.now() + 60000;
+    state.reconnectLeft = 60;
+  });
+  socket.addEventListener('error', () => {
+    if (state.screen !== 'entry') {
+      setConnState('RECONNECTING');
+      state.reconnectAt = Date.now() + 60000;
+      state.reconnectLeft = 60;
+    }
+  });
+}
 
 function worldFromCell(x, y) {
   return {
@@ -394,7 +436,7 @@ lobbyCard.classList.add('hidden');
 function setStatusText() {
   hudLives.textContent = `${state.lives}`;
   hudRoom.textContent = state.roomCode;
-  hudConn.textContent = 'LOCAL';
+  hudConn.textContent = state.connState === 'RECONNECTING' ? `RECONNECT ${state.reconnectLeft}s` : state.connState;
   if (state.mode === 'won') {
     hudStatus.textContent = 'WON';
   } else if (state.mode === 'lost') {
@@ -579,6 +621,7 @@ function startLocalMatch() {
 }
 
 function enterLobbyWithRoom(roomCode) {
+  connectSocket();
   state.roomCode = roomCode;
   state.localReady = false;
   state.screen = 'lobby';
@@ -685,6 +728,14 @@ btnLeave.addEventListener('click', () => {
   nicknameInput.value = state.nickname;
   joinCodeInput.value = '';
   entryError.textContent = '';
+  try {
+    socket?.close();
+  } catch {
+    // noop
+  }
+  setConnState('LOCAL');
+  state.reconnectLeft = 0;
+  state.reconnectAt = 0;
   renderScreenState();
 });
 
@@ -933,6 +984,15 @@ function updateTeammateAvatar(dt) {
 function step(dt) {
   if (state.screen !== 'playing' && keys.size > 0) {
     keys.clear();
+  }
+  if (state.connState === 'RECONNECTING') {
+    const leftMs = Math.max(0, state.reconnectAt - Date.now());
+    state.reconnectLeft = Math.ceil(leftMs / 1000);
+    if (leftMs <= 0) {
+      setConnState('DISCONNECTED');
+    } else if ((!socket || socket.readyState >= 2) && leftMs % 5000 < 17) {
+      connectSocket(true);
+    }
   }
   if (state.mode === 'playing') {
     state.elapsedMs += dt * 1000;
