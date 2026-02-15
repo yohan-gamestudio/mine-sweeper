@@ -278,3 +278,15 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - Playwright CLI snapshots captured for current host/guest state:
     - `.playwright/snapshots/t7s1-host-current.txt`
     - `.playwright/snapshots/t7s1-guest-current.txt`
+
+## Progress Update 22 (Task 7 Step 2)
+- Added repeatable Playwright CLI smoke scenario pack: `scripts/playwright_smoke_scenarios.sh`.
+- Scenario coverage:
+  - host flow (create room)
+  - guest flow (join room)
+  - in-game sync flow (ready/start -> both in playing screen)
+  - reconnect flow (guest browser rejoin)
+  - authoritative checks via ws smokes (patch sync, reconnect, restart)
+- Verification:
+  - `scripts/playwright_smoke_scenarios.sh` => `playwright_smoke_scenarios:ok room=...`.
+  - snapshots generated under `.playwright/snapshots/t7s2-*`.
