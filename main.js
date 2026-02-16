@@ -21,6 +21,8 @@ const HOST_SLOT = ROOM_SLOTS[0];
 const PLAYER_COLLISION_RADIUS = 0.7;
 const MOVE_SYNC_MS = 50;
 const FOOTSTEP_INTERVAL_MS = 360;
+const CHAT_BUBBLE_MS = 3200;
+const CHAT_BUBBLE_MAX_LEN = 52;
 
 const app = document.querySelector('#app');
 app.innerHTML = `
@@ -160,36 +162,63 @@ const fxBursts = [];
 const upAxis = new THREE.Vector3(0, 1, 0);
 
 function makeNameSprite(text) {
+  const sprite = makeTextSprite({
+    text,
+    width: 256,
+    height: 64,
+    font: 'bold 28px "IBM Plex Sans", sans-serif',
+    background: 'rgba(9,12,18,0.72)',
+    stroke: 'rgba(255,255,255,0.4)',
+    textColor: '#f7fbff',
+    padY: 8
+  });
+  sprite.scale.set(1.8, 0.45, 1);
+  return sprite;
+}
+
+function makeTextSprite({
+  text,
+  width = 320,
+  height = 84,
+  font = 'bold 24px "IBM Plex Sans", sans-serif',
+  background = 'rgba(9,12,18,0.82)',
+  stroke = 'rgba(255,255,255,0.38)',
+  textColor = '#f7fbff',
+  padY = 10
+}) {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = 'rgba(9,12,18,0.72)';
-  ctx.fillRect(0, 8, 256, 48);
-  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-  ctx.strokeRect(1, 9, 254, 46);
-  ctx.font = 'bold 28px "IBM Plex Sans", sans-serif';
+  ctx.fillStyle = background;
+  ctx.fillRect(0, padY, width, height - padY * 2);
+  ctx.strokeStyle = stroke;
+  ctx.strokeRect(1, padY + 1, width - 2, height - padY * 2 - 2);
+  ctx.font = font;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#f7fbff';
-  ctx.fillText(text, 128, 32);
+  ctx.fillStyle = textColor;
+  ctx.fillText(text, width / 2, height / 2);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
-  sprite.scale.set(1.8, 0.45, 1);
   return sprite;
 }
 
 function createTeammateAvatar(name = 'Teammate') {
   const group = new THREE.Group();
 
+  const headRig = new THREE.Group();
+  headRig.position.set(0, 1.6, 0);
+  group.add(headRig);
+
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.46, 0.46), teammateSkinMaterial);
-  head.position.y = 1.72;
-  group.add(head);
+  head.position.y = 0.12;
+  headRig.add(head);
 
   const hair = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.14, 0.48), teammateHairMaterial);
-  hair.position.set(0, 1.88, 0);
-  group.add(hair);
+  hair.position.set(0, 0.28, 0);
+  headRig.add(hair);
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.32), teammateShirtMaterial);
   body.position.y = 1.2;
@@ -220,22 +249,22 @@ function createTeammateAvatar(name = 'Teammate') {
   group.add(shoeRight);
 
   const eyeLeft = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), teammateFaceDetailMaterial);
-  eyeLeft.position.set(-0.08, 1.74, -0.24);
-  group.add(eyeLeft);
+  eyeLeft.position.set(-0.08, 0.14, -0.24);
+  headRig.add(eyeLeft);
 
   const eyeRight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), teammateFaceDetailMaterial);
-  eyeRight.position.set(0.08, 1.74, -0.24);
-  group.add(eyeRight);
+  eyeRight.position.set(0.08, 0.14, -0.24);
+  headRig.add(eyeRight);
 
   const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.025, 0.02), teammateFaceDetailMaterial);
-  mouth.position.set(0, 1.62, -0.24);
-  group.add(mouth);
+  mouth.position.set(0, 0.02, -0.24);
+  headRig.add(mouth);
 
   const nameTag = makeNameSprite(name);
   nameTag.position.set(0, 2.2, 0);
   group.add(nameTag);
 
-  return { group, nameTag, armLeft, armRight, legLeft, legRight };
+  return { group, nameTag, headRig, armLeft, armRight, legLeft, legRight };
 }
 const remoteAvatars = new Map();
 
@@ -268,6 +297,7 @@ const state = {
   mySlot: HOST_SLOT,
   authoritative: false,
   chat: [],
+  chatBubbles: {},
   remotePlayers: {},
   cells: [],
   cellsFlat: [],
@@ -331,11 +361,15 @@ function fallbackRemoteSpawn(slot) {
   const idx = Math.max(0, ROOM_SLOTS.indexOf(slot));
   return {
     targetX: (idx - 1.5) * 1.8,
+    targetY: PLAYER_HEIGHT,
     targetZ: -2.8,
     targetYaw: 0,
+    targetPitch: 0,
     renderX: (idx - 1.5) * 1.8,
+    renderY: PLAYER_HEIGHT,
     renderZ: -2.8,
     renderYaw: 0,
+    renderPitch: 0,
     at: Date.now()
   };
 }
@@ -396,9 +430,16 @@ function syncRemoteAvatarsFromState() {
   );
   for (const [slot, avatar] of remoteAvatars.entries()) {
     if (!activeSlots.has(slot)) {
+      if (avatar.chatBubble) {
+        avatar.chatBubble.material.map.dispose?.();
+        avatar.chatBubble.material.dispose?.();
+        avatar.group.remove(avatar.chatBubble);
+        avatar.chatBubble = null;
+      }
       scene.remove(avatar.group);
       remoteAvatars.delete(slot);
       delete state.remotePlayers[slot];
+      delete state.chatBubbles[slot];
     }
   }
   for (const p of state.players) {
@@ -408,6 +449,57 @@ function syncRemoteAvatarsFromState() {
       state.remotePlayers[p.slot] = fallbackRemoteSpawn(p.slot);
     }
   }
+}
+
+function setAvatarChatBubble(slot, text) {
+  const avatar = remoteAvatars.get(slot);
+  if (!avatar) return;
+  const normalized = String(text || '').trim();
+  if (!normalized) return;
+  const shortText = normalized.length > CHAT_BUBBLE_MAX_LEN ? `${normalized.slice(0, CHAT_BUBBLE_MAX_LEN - 1)}…` : normalized;
+  if (avatar.chatBubble && avatar.chatBubbleText === shortText) return;
+  if (avatar.chatBubble) {
+    avatar.chatBubble.material.map.dispose?.();
+    avatar.chatBubble.material.dispose?.();
+    avatar.group.remove(avatar.chatBubble);
+  }
+  const bubble = makeTextSprite({
+    text: shortText,
+    width: 384,
+    height: 92,
+    font: '600 24px "IBM Plex Sans", "Noto Sans KR", sans-serif',
+    background: 'rgba(10,14,24,0.88)',
+    stroke: 'rgba(255,255,255,0.42)',
+    textColor: '#f6fbff',
+    padY: 8
+  });
+  bubble.scale.set(2.35, 0.56, 1);
+  bubble.position.set(0, 2.8, 0);
+  avatar.group.add(bubble);
+  avatar.chatBubble = bubble;
+  avatar.chatBubbleText = shortText;
+}
+
+function clearAvatarChatBubble(slot) {
+  const avatar = remoteAvatars.get(slot);
+  if (!avatar?.chatBubble) return;
+  avatar.chatBubble.material.map.dispose?.();
+  avatar.chatBubble.material.dispose?.();
+  avatar.group.remove(avatar.chatBubble);
+  avatar.chatBubble = null;
+  avatar.chatBubbleText = '';
+}
+
+function isChatInputActive() {
+  return state.screen === 'playing' && document.activeElement === chatInput;
+}
+
+function focusChatInput() {
+  if (state.screen !== 'playing') return;
+  keys.clear();
+  holdMap(false);
+  document.exitPointerLock?.();
+  chatInput.focus();
 }
 
 function setConnState(next) {
@@ -487,8 +579,10 @@ function connectSocket(force = false) {
         state.remotePlayers[payload.slot] = {
           ...prev,
           targetX: payload.x,
+          targetY: payload.y ?? prev.targetY ?? PLAYER_HEIGHT,
           targetZ: payload.z,
           targetYaw: payload.yaw ?? prev.targetYaw ?? 0,
+          targetPitch: payload.pitch ?? prev.targetPitch ?? 0,
           at: payload.at ?? Date.now()
         };
       }
@@ -505,6 +599,7 @@ function connectSocket(force = false) {
     }
     if (type === EVENT.CHAT_MESSAGE) {
       appendChatMessage({
+        from: payload.from ?? null,
         nickname: payload.nickname ?? 'Teammate',
         text: payload.text ?? ''
       });
@@ -733,6 +828,9 @@ function renderScreenState() {
   const amHost = state.mySlot === HOST_SLOT;
   btnStart.disabled = !amHost || connectedCount < 2;
   chatPanel.classList.toggle('hidden', state.screen !== 'playing');
+  if (state.screen !== 'playing' && document.activeElement === chatInput) {
+    chatInput.blur();
+  }
 }
 
 function renderChat() {
@@ -744,6 +842,12 @@ function renderChat() {
 
 function appendChatMessage(message) {
   state.chat.push(message);
+  if (message.from && message.from !== state.mySlot) {
+    state.chatBubbles[message.from] = {
+      text: message.text,
+      expiresAt: Date.now() + CHAT_BUBBLE_MS
+    };
+  }
   renderChat();
 }
 
@@ -818,6 +922,9 @@ function applyServerSnapshot(payload) {
     const myPos = payload.positions[state.mySlot];
     if (myPos && Number.isFinite(myPos.x) && Number.isFinite(myPos.z)) {
       camera.position.x = myPos.x;
+      if (Number.isFinite(myPos.y)) {
+        camera.position.y = myPos.y;
+      }
       camera.position.z = myPos.z;
       if (Number.isFinite(myPos.yaw)) {
         state.yaw = myPos.yaw;
@@ -829,19 +936,25 @@ function applyServerSnapshot(payload) {
       if (!prev) {
         state.remotePlayers[slot] = {
           targetX: pos.x,
+          targetY: pos.y ?? PLAYER_HEIGHT,
           targetZ: pos.z,
           targetYaw: pos.yaw ?? 0,
+          targetPitch: pos.pitch ?? 0,
           renderX: pos.x,
+          renderY: pos.y ?? PLAYER_HEIGHT,
           renderZ: pos.z,
           renderYaw: pos.yaw ?? 0,
+          renderPitch: pos.pitch ?? 0,
           at: pos.at ?? Date.now()
         };
       } else {
         state.remotePlayers[slot] = {
           ...prev,
           targetX: pos.x,
+          targetY: pos.y ?? prev.targetY ?? PLAYER_HEIGHT,
           targetZ: pos.z,
           targetYaw: pos.yaw ?? prev.targetYaw ?? 0,
+          targetPitch: pos.pitch ?? prev.targetPitch ?? 0,
           at: pos.at ?? Date.now()
         };
       }
@@ -879,8 +992,10 @@ function applyServerGamePatch(payload) {
       state.remotePlayers[change.slot] = {
         ...prev,
         targetX: change.x,
+        targetY: change.y ?? prev.targetY ?? PLAYER_HEIGHT,
         targetZ: change.z,
         targetYaw: change.yaw ?? prev.targetYaw ?? 0,
+        targetPitch: change.pitch ?? prev.targetPitch ?? 0,
         at: Date.now()
       };
       }
@@ -1172,11 +1287,12 @@ btnResultLobby.addEventListener('click', () => {
 
 function sendChatFromInput() {
   const text = chatInput.value.trim();
-  if (!text) return;
+  if (!text) return false;
   const intent = sendLocalIntent(EVENT.CHAT_SEND, { text });
-  if (!intent) return;
+  if (!intent) return false;
   sendSocketEvent(EVENT.CHAT_SEND, intent);
   chatInput.value = '';
+  return true;
 }
 
 chatSend.addEventListener('click', () => {
@@ -1187,6 +1303,14 @@ chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
     sendChatFromInput();
+    return;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    chatInput.blur();
+    if (state.screen === 'playing') {
+      safeRequestPointerLock();
+    }
   }
 });
 
@@ -1199,6 +1323,15 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 window.addEventListener('keydown', (e) => {
+  if (state.screen === 'playing' && e.key === 'Enter') {
+    e.preventDefault();
+    if (isChatInputActive()) {
+      sendChatFromInput();
+    } else {
+      focusChatInput();
+    }
+    return;
+  }
   if (state.screen === 'result' && e.code === 'KeyR') {
     const intent = sendLocalIntent(EVENT.GAME_RESTART, {});
     if (!intent) return;
@@ -1210,6 +1343,9 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (state.screen !== 'playing') return;
+  if (isChatInputActive()) {
+    return;
+  }
   if (e.code === 'Tab') {
     e.preventDefault();
     holdMap(true);
@@ -1221,6 +1357,7 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => {
   if (state.screen !== 'playing') return;
+  if (isChatInputActive()) return;
   if (e.code === 'Tab') {
     holdMap(false);
   }
@@ -1406,7 +1543,13 @@ function updateMovement(dt) {
   if (state.authoritative) {
     const now = performance.now();
     if (now - state.lastMoveSyncAt >= MOVE_SYNC_MS) {
-      const intent = sendLocalIntent(EVENT.PLAYER_MOVE, { x: camera.position.x, z: camera.position.z, yaw: state.yaw });
+      const intent = sendLocalIntent(EVENT.PLAYER_MOVE, {
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z,
+        yaw: state.yaw,
+        pitch: state.pitch
+      });
       if (intent) {
         sendSocketEvent(EVENT.PLAYER_MOVE, intent);
       }
@@ -1447,12 +1590,15 @@ function updateFx(dt) {
 }
 
 function updateRemoteAvatars(dt) {
+  const now = Date.now();
   for (const [slot, avatar] of remoteAvatars.entries()) {
     const pos = state.remotePlayers[slot];
     if (!pos) continue;
     if (!Number.isFinite(pos.renderX)) pos.renderX = pos.targetX ?? 0;
+    if (!Number.isFinite(pos.renderY)) pos.renderY = pos.targetY ?? PLAYER_HEIGHT;
     if (!Number.isFinite(pos.renderZ)) pos.renderZ = pos.targetZ ?? 0;
     if (!Number.isFinite(pos.renderYaw)) pos.renderYaw = pos.targetYaw ?? 0;
+    if (!Number.isFinite(pos.renderPitch)) pos.renderPitch = pos.targetPitch ?? 0;
     if (!Number.isFinite(pos.animPhase)) pos.animPhase = 0;
     if (!Number.isFinite(pos.moveSpeed)) pos.moveSpeed = 0;
 
@@ -1460,31 +1606,49 @@ function updateRemoteAvatars(dt) {
     const prevZ = pos.renderZ;
     const smooth = 0.18;
     pos.renderX += ((pos.targetX ?? pos.renderX) - pos.renderX) * smooth;
+    pos.renderY += ((pos.targetY ?? pos.renderY) - pos.renderY) * smooth;
     pos.renderZ += ((pos.targetZ ?? pos.renderZ) - pos.renderZ) * smooth;
     pos.renderYaw = lerpAngle(pos.renderYaw ?? 0, pos.targetYaw ?? 0, smooth);
+    pos.renderPitch += ((pos.targetPitch ?? pos.renderPitch) - pos.renderPitch) * smooth;
 
     const movedDist = Math.hypot(pos.renderX - prevX, pos.renderZ - prevZ);
     const instantSpeed = dt > 0 ? movedDist / dt : 0;
     pos.moveSpeed += (instantSpeed - pos.moveSpeed) * 0.24;
 
-    const walkFactor = Math.min(1, pos.moveSpeed / 2.3);
+    const walkFactor = Math.min(1, pos.moveSpeed / 2.8);
     const isWalking = walkFactor > 0.08;
     if (isWalking) {
-      pos.animPhase += dt * (5.5 + walkFactor * 5.5);
+      pos.animPhase += dt * (4.4 + walkFactor * 4.2);
     }
 
-    avatar.group.position.set(pos.renderX, 0, pos.renderZ);
+    avatar.group.position.set(pos.renderX, Math.max(0, pos.renderY - PLAYER_HEIGHT), pos.renderZ);
 
-    const swingAmp = 0.55 * walkFactor;
+    const swingAmp = 0.3 * walkFactor;
     const swing = Math.sin(pos.animPhase) * swingAmp;
-    const bob = Math.abs(Math.sin(pos.animPhase * 2)) * 0.05 * walkFactor;
+    const bob = Math.abs(Math.sin(pos.animPhase * 2)) * 0.025 * walkFactor;
     avatar.legLeft.rotation.x += (swing - avatar.legLeft.rotation.x) * 0.35;
     avatar.legRight.rotation.x += (-swing - avatar.legRight.rotation.x) * 0.35;
-    avatar.armLeft.rotation.x += ((-swing * 0.85) - avatar.armLeft.rotation.x) * 0.35;
-    avatar.armRight.rotation.x += ((swing * 0.85) - avatar.armRight.rotation.x) * 0.35;
-    avatar.group.position.y = bob;
+    avatar.armLeft.rotation.x += ((-swing * 0.65) - avatar.armLeft.rotation.x) * 0.35;
+    avatar.armRight.rotation.x += ((swing * 0.65) - avatar.armRight.rotation.x) * 0.35;
+    avatar.legLeft.rotation.z += (0.04 - avatar.legLeft.rotation.z) * 0.22;
+    avatar.legRight.rotation.z += (-0.04 - avatar.legRight.rotation.z) * 0.22;
+    avatar.group.position.y += bob;
     avatar.group.rotation.y = pos.renderYaw ?? 0;
+    if (avatar.headRig) {
+      avatar.headRig.rotation.x += (((pos.renderPitch ?? 0) * 0.72) - avatar.headRig.rotation.x) * 0.3;
+    }
     avatar.nameTag.quaternion.copy(camera.quaternion);
+
+    const bubble = state.chatBubbles[slot];
+    if (bubble && bubble.expiresAt > now && bubble.text) {
+      setAvatarChatBubble(slot, bubble.text);
+      if (avatar.chatBubble) {
+        avatar.chatBubble.quaternion.copy(camera.quaternion);
+      }
+    } else {
+      delete state.chatBubbles[slot];
+      clearAvatarChatBubble(slot);
+    }
   }
 }
 

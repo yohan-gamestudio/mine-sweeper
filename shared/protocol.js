@@ -46,7 +46,7 @@ export const EVENT_DOC = Object.freeze({
   [EVENT.ROOM_CREATE]: { nickname: 'string(2-12)' },
   [EVENT.ROOM_JOIN]: { nickname: 'string(2-12)', roomCode: 'string(4 digits)', reconnectToken: 'string(optional)' },
   [EVENT.PLAYER_READY]: { ready: 'boolean' },
-  [EVENT.PLAYER_MOVE]: { x: 'number', z: 'number', yaw: 'number' },
+  [EVENT.PLAYER_MOVE]: { x: 'number', y: 'number', z: 'number', yaw: 'number', pitch: 'number' },
   [EVENT.GAME_START]: {},
   [EVENT.GAME_RESTART]: {},
   [EVENT.CELL_OPEN]: { x: 'int', y: 'int' },
@@ -76,8 +76,10 @@ export const EVENT_DOC = Object.freeze({
   [EVENT.PLAYER_POS]: {
     slot: 'string',
     x: 'number',
+    y: 'number',
     z: 'number',
     yaw: 'number',
+    pitch: 'number',
     at: 'epoch-ms'
   },
   [EVENT.GAME_RESULT]: {

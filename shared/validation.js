@@ -23,8 +23,10 @@ export const clientPayloadSchemas = Object.freeze({
   }),
   [EVENT.PLAYER_MOVE]: z.object({
     x: z.number().finite(),
+    y: z.number().finite(),
     z: z.number().finite(),
-    yaw: z.number().finite()
+    yaw: z.number().finite(),
+    pitch: z.number().finite()
   }),
   [EVENT.GAME_START]: z.object({}),
   [EVENT.GAME_RESTART]: z.object({}),

@@ -42,6 +42,7 @@ const ROOM_SLOTS = Object.freeze(['p1', 'p2', 'p3', 'p4']);
 const HOST_SLOT = ROOM_SLOTS[0];
 const RESPAWN_MS = 3000;
 const START_LIVES = 5;
+const CAMERA_EYE_HEIGHT = 1.7;
 const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS || 60000);
 const ROOM_SWEEP_MS = Number(process.env.ROOM_SWEEP_MS || 5000);
 const MIN_START_PLAYERS = 2;
@@ -58,8 +59,10 @@ function makeDefaultSpawn(slot) {
   const idx = ROOM_SLOTS.indexOf(slot);
   return {
     x: (idx - 1.5) * 1.8,
+    y: CAMERA_EYE_HEIGHT,
     z: -2.8,
     yaw: 0,
+    pitch: 0,
     at: Date.now()
   };
 }
@@ -118,7 +121,7 @@ function gamePlayersPayload(room) {
 function gamePositionsPayload(room) {
   const out = {};
   for (const [slot, pos] of Object.entries(room.positions)) {
-    out[slot] = { x: pos.x, z: pos.z, yaw: pos.yaw, at: pos.at };
+    out[slot] = { x: pos.x, y: pos.y, z: pos.z, yaw: pos.yaw, pitch: pos.pitch, at: pos.at };
   }
   return out;
 }
@@ -194,8 +197,10 @@ function broadcastPlayerPos(room, slot) {
   const payload = {
     slot,
     x: pos.x,
+    y: pos.y,
     z: pos.z,
     yaw: pos.yaw,
+    pitch: pos.pitch,
     at: pos.at
   };
   for (const peerSlot of ROOM_SLOTS) {
@@ -581,8 +586,10 @@ wss.on('connection', (ws) => {
 
       room.positions[client.slot] = {
         x: checked.data.x,
+        y: checked.data.y,
         z: checked.data.z,
         yaw: checked.data.yaw,
+        pitch: checked.data.pitch,
         at: Date.now()
       };
       broadcastPlayerPos(room, client.slot);
