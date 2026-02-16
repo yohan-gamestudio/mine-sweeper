@@ -32,6 +32,7 @@ body {
   line-height: 1.35;
   font-size: 14px;
   pointer-events: none;
+  z-index: 30;
 }
 
 #hud .value {
@@ -48,6 +49,31 @@ body {
   font-weight: 700;
   text-shadow: 0 0 6px rgba(0, 0, 0, 0.75);
   pointer-events: none;
+  z-index: 32;
+}
+
+#dead-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(1);
+  background:
+    radial-gradient(circle at center, rgba(255, 195, 145, 0) 52%, rgba(182, 116, 92, 0.15) 76%, rgba(72, 40, 32, 0.42) 100%);
+  z-index: 24;
+}
+
+#blast-pop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(1);
+  transition: opacity 680ms ease-out, transform 680ms ease-out;
+  background:
+    radial-gradient(circle at center, rgba(255, 247, 228, 0.95) 0%, rgba(255, 210, 150, 0.6) 24%, rgba(255, 168, 102, 0.18) 52%, rgba(255, 168, 102, 0) 72%),
+    linear-gradient(rgba(255, 214, 170, 0.2), rgba(255, 214, 170, 0.2));
+  z-index: 23;
 }
 
 #chat-panel {
@@ -60,6 +86,7 @@ body {
   border-radius: 10px;
   color: #edf3ff;
   padding: 8px;
+  z-index: 31;
 }
 
 #chat-log {
@@ -102,6 +129,7 @@ body {
   display: grid;
   place-items: center;
   pointer-events: none;
+  z-index: 40;
 }
 
 #entry-card,
@@ -184,6 +212,7 @@ body {
   display: grid;
   place-items: center;
   pointer-events: none;
+  z-index: 35;
 }
 
 #map-panel {

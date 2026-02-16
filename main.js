@@ -5,7 +5,7 @@ import { validateClientEvent } from './shared/validation.js';
 const GRID_SIZE = 16;
 const MINE_COUNT = 40;
 const CELL_SIZE = 4.4;
-const INTERACT_RANGE_BLOCKS = 3;
+const INTERACT_RANGE_BLOCKS = 1;
 const INTERACT_RANGE_UNITS = INTERACT_RANGE_BLOCKS * CELL_SIZE;
 const MAX_LIVES = 5;
 const RESPAWN_SECONDS = 3;
@@ -24,6 +24,8 @@ const FOOTSTEP_INTERVAL_MS = 360;
 const CHAT_BUBBLE_MS = 3200;
 const CHAT_BUBBLE_MAX_LEN = 52;
 const EXPLOSION_PARTICLE_COUNT = 18;
+const DEAD_FX_IN_SPEED = 10;
+const DEAD_FX_OUT_SPEED = 8;
 
 const app = document.querySelector('#app');
 app.innerHTML = `
@@ -35,6 +37,8 @@ app.innerHTML = `
     <div id="hud-tip">Click to lock pointer</div>
   </div>
   <div id="crosshair">+</div>
+  <div id="blast-pop"></div>
+  <div id="dead-vignette"></div>
   <div id="chat-panel">
     <div id="chat-log"></div>
     <div id="chat-input-row">
@@ -111,6 +115,8 @@ const chatPanel = document.querySelector('#chat-panel');
 const chatLog = document.querySelector('#chat-log');
 const chatInput = document.querySelector('#chat-input');
 const chatSend = document.querySelector('#chat-send');
+const blastPop = document.querySelector('#blast-pop');
+const deadVignette = document.querySelector('#dead-vignette');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87c1ff);
@@ -119,6 +125,9 @@ scene.fog = new THREE.Fog(0x87c1ff, 28, 80);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.domElement.style.position = 'absolute';
+renderer.domElement.style.inset = '0';
+renderer.domElement.style.zIndex = '0';
 app.appendChild(renderer.domElement);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 180);
@@ -285,6 +294,9 @@ const state = {
   deadPitch: 0,
   deadViewTargets: ['self'],
   deadViewIndex: 0,
+  deadFx: 0,
+  shakeAmp: 0,
+  shakeT: 0,
   safeOpened: 0,
   totalSafe: GRID_SIZE * GRID_SIZE - MINE_COUNT,
   startTimeMs: 0,
@@ -301,6 +313,7 @@ const state = {
   authoritative: false,
   chat: [],
   chatBubbles: {},
+  remoteDeadUntil: {},
   remotePlayers: {},
   cells: [],
   cellsFlat: [],
@@ -312,6 +325,7 @@ let socket = null;
 let reconnectRetryAt = 0;
 const pendingSocketMessages = [];
 let audioCtx = null;
+let blastPopTimer = null;
 
 function ensureAudioCtx() {
   if (!audioCtx) {
@@ -345,7 +359,74 @@ function playFlagSound(flagged) {
 }
 
 function playExplosionSound() {
-  playTone({ frequency: 110, duration: 0.2, type: 'sawtooth', gain: 0.045 });
+  const ctx = ensureAudioCtx();
+  const t0 = ctx.currentTime;
+
+  const master = ctx.createGain();
+  master.gain.value = 0.62;
+  master.connect(ctx.destination);
+
+  const sub = ctx.createOscillator();
+  const subGain = ctx.createGain();
+  sub.type = 'sawtooth';
+  sub.frequency.setValueAtTime(124, t0);
+  sub.frequency.exponentialRampToValueAtTime(38, t0 + 0.28);
+  subGain.gain.setValueAtTime(0.22, t0);
+  subGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3);
+  sub.connect(subGain);
+  subGain.connect(master);
+  sub.start(t0);
+  sub.stop(t0 + 0.31);
+
+  const punch = ctx.createOscillator();
+  const punchGain = ctx.createGain();
+  punch.type = 'square';
+  const pitchJitter = 1 + (Math.random() * 0.16 - 0.08);
+  punch.frequency.setValueAtTime(320 * pitchJitter, t0);
+  punch.frequency.exponentialRampToValueAtTime(138 * pitchJitter, t0 + 0.09);
+  punchGain.gain.setValueAtTime(0.14, t0);
+  punchGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
+  punch.connect(punchGain);
+  punchGain.connect(master);
+  punch.start(t0);
+  punch.stop(t0 + 0.12);
+
+  const sr = ctx.sampleRate;
+  const len = Math.floor(sr * 0.24);
+  const buf = ctx.createBuffer(1, len, sr);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i += 1) {
+    const x = i / len;
+    const env = Math.pow(1 - x, 2.2);
+    data[i] = (Math.random() * 2 - 1) * env;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = buf;
+  const noiseBand = ctx.createBiquadFilter();
+  noiseBand.type = 'bandpass';
+  noiseBand.frequency.setValueAtTime(1450, t0);
+  noiseBand.Q.value = 1.3;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.18, t0);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+  noise.connect(noiseBand);
+  noiseBand.connect(noiseGain);
+  noiseGain.connect(master);
+  noise.start(t0);
+  noise.stop(t0 + 0.21);
+
+  const tail = ctx.createOscillator();
+  const tailGain = ctx.createGain();
+  tail.type = 'triangle';
+  tail.frequency.setValueAtTime(84, t0 + 0.05);
+  tail.frequency.exponentialRampToValueAtTime(52, t0 + 0.35);
+  tailGain.gain.setValueAtTime(0.0001, t0);
+  tailGain.gain.exponentialRampToValueAtTime(0.08, t0 + 0.07);
+  tailGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.42);
+  tail.connect(tailGain);
+  tailGain.connect(master);
+  tail.start(t0 + 0.03);
+  tail.stop(t0 + 0.43);
 }
 
 function playJumpSound() {
@@ -398,6 +479,25 @@ function cycleDeadView(dir = 1) {
   if (state.deadViewTargets.length <= 1) return;
   const n = state.deadViewTargets.length;
   state.deadViewIndex = (state.deadViewIndex + dir + n) % n;
+}
+
+function triggerBlastPop(intensity = 1, holdMs = 1000) {
+  const power = Math.max(0, Math.min(1, intensity));
+  blastPop.style.opacity = String((0.9 + power * 0.1).toFixed(3));
+  blastPop.style.transform = `scale(${(1.01 + power * 0.03).toFixed(3)})`;
+  if (blastPopTimer) {
+    clearTimeout(blastPopTimer);
+  }
+  blastPopTimer = setTimeout(() => {
+    blastPop.style.opacity = '0';
+    blastPop.style.transform = 'scale(1)';
+    blastPopTimer = null;
+  }, holdMs);
+}
+
+function triggerCameraShake(intensity = 1) {
+  const amount = Math.max(0, Math.min(2, intensity));
+  state.shakeAmp = Math.max(state.shakeAmp, amount);
 }
 
 function fallbackRemoteSpawn(slot) {
@@ -802,12 +902,14 @@ function resetGame() {
   state.deadLeft = 0;
   state.deadViewTargets = ['self'];
   state.deadViewIndex = 0;
+  state.deadFx = 0;
   state.velocityY = 0;
   state.safeOpened = 0;
   state.totalSafe = GRID_SIZE * GRID_SIZE - MINE_COUNT;
   state.startTimeMs = performance.now();
   state.elapsedMs = 0;
   state.footstepAt = 0;
+  state.remoteDeadUntil = {};
 
   buildBoard();
 
@@ -941,16 +1043,26 @@ function applyCellVisual(cell) {
   }
 }
 
-function applyServerCellPatch(patch) {
+function applyServerCellPatch(patch, options = {}) {
   if (typeof patch?.x !== 'number' || typeof patch?.y !== 'number') return;
+  const { emitFx = false } = options;
   const cell = state.cells?.[patch.y]?.[patch.x];
   if (!cell) return;
+  const wasExploded = cell.exploded;
   if (typeof patch.flagged === 'boolean') cell.flagged = patch.flagged;
   if (typeof patch.opened === 'boolean') cell.opened = patch.opened;
   if (typeof patch.exploded === 'boolean') cell.exploded = patch.exploded;
   if (typeof patch.number === 'number') cell.number = patch.number;
+  // Server-authoritative open on non-exploded cell means the tile is safe.
+  // This prevents stale local-random mine flags from keeping the cap visible.
+  if (cell.opened && !cell.exploded) {
+    cell.mine = false;
+  }
   if (cell.exploded) cell.mine = true;
   applyCellVisual(cell);
+  if (emitFx && !wasExploded && cell.exploded) {
+    addExplosionBurst(cell);
+  }
 }
 
 function applyServerSnapshot(payload) {
@@ -963,7 +1075,7 @@ function applyServerSnapshot(payload) {
     for (const row of payload.cells) {
       if (!Array.isArray(row)) continue;
       for (const c of row) {
-        applyServerCellPatch(c);
+        applyServerCellPatch(c, { emitFx: false });
       }
     }
   }
@@ -1010,6 +1122,16 @@ function applyServerSnapshot(payload) {
     }
   }
   const myPlayer = payload.players?.[state.mySlot];
+  if (payload.players && typeof payload.players === 'object') {
+    for (const [slot, player] of Object.entries(payload.players)) {
+      if (slot === state.mySlot) continue;
+      if (player?.deadUntil && player.deadUntil > Date.now()) {
+        state.remoteDeadUntil[slot] = player.deadUntil;
+      } else {
+        delete state.remoteDeadUntil[slot];
+      }
+    }
+  }
   if (myPlayer?.deadUntil && myPlayer.deadUntil > Date.now()) {
     enterDeadState((myPlayer.deadUntil - Date.now()) / 1000);
   } else {
@@ -1032,7 +1154,7 @@ function applyServerGamePatch(payload) {
   if (Array.isArray(payload.changes)) {
     for (const change of payload.changes) {
       if (change.type === 'cell') {
-        applyServerCellPatch(change);
+        applyServerCellPatch(change, { emitFx: true });
       }
       if (change.type === 'position' && change.slot !== state.mySlot) {
       const prev = state.remotePlayers[change.slot] || fallbackRemoteSpawn(change.slot);
@@ -1048,7 +1170,13 @@ function applyServerGamePatch(payload) {
       }
       if (change.type === 'player' && change.slot === state.mySlot && change.deadUntil > Date.now()) {
         enterDeadState((change.deadUntil - Date.now()) / 1000);
-        playExplosionSound();
+      }
+      if (change.type === 'player' && change.slot !== state.mySlot) {
+        if (change.deadUntil && change.deadUntil > Date.now()) {
+          state.remoteDeadUntil[change.slot] = change.deadUntil;
+        } else {
+          delete state.remoteDeadUntil[change.slot];
+        }
       }
       if (change.type === 'cell' && typeof change.flagged === 'boolean') {
         playFlagSound(change.flagged);
@@ -1063,11 +1191,18 @@ function applyServerGamePatch(payload) {
 function addExplosionBurst(cell) {
   const p = worldFromCell(cell.x, cell.y);
   const core = new THREE.Mesh(
-    new THREE.SphereGeometry(0.18, 10, 10),
-    new THREE.MeshBasicMaterial({ color: 0xff9f6b, transparent: true, opacity: 0.95 })
+    new THREE.SphereGeometry(0.74, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffc28a, transparent: true, opacity: 0.96 })
   );
-  core.position.set(p.x, 0.48, p.z);
+  core.position.set(p.x, 1.22, p.z);
   scene.add(core);
+
+  const plume = new THREE.Mesh(
+    new THREE.SphereGeometry(1.06, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffa56a, transparent: true, opacity: 0.6 })
+  );
+  plume.position.set(p.x, 1.56, p.z);
+  scene.add(plume);
 
   const shockwave = new THREE.Mesh(
     new THREE.RingGeometry(0.16, 0.3, 28),
@@ -1077,20 +1212,27 @@ function addExplosionBurst(cell) {
   shockwave.position.set(p.x, 0.16, p.z);
   scene.add(shockwave);
 
-  const flash = new THREE.PointLight(0xff9b5d, 1.8, CELL_SIZE * 2.8, 2);
-  flash.position.set(p.x, 0.9, p.z);
+  const flash = new THREE.PointLight(0xffca93, 4.2, CELL_SIZE * 5.4, 2);
+  flash.position.set(p.x, 1.2, p.z);
   scene.add(flash);
 
   const particles = [];
   for (let i = 0; i < EXPLOSION_PARTICLE_COUNT; i += 1) {
+    const isSmoke = i % 3 === 0;
     const piece = new THREE.Mesh(
-      new THREE.BoxGeometry(0.1, 0.1, 0.1),
-      new THREE.MeshStandardMaterial({ color: i % 3 === 0 ? 0xff7a45 : 0x36393f, roughness: 0.8, metalness: 0.15 })
+      isSmoke ? new THREE.SphereGeometry(0.09 + Math.random() * 0.06, 8, 8) : new THREE.BoxGeometry(0.08, 0.08, 0.08),
+      new THREE.MeshStandardMaterial({
+        color: isSmoke ? 0x8f8c87 : i % 2 === 0 ? 0xffaa6d : 0x4a4d53,
+        roughness: 0.85,
+        metalness: isSmoke ? 0.02 : 0.12,
+        transparent: true,
+        opacity: isSmoke ? 0.82 : 0.95
+      })
     );
-    piece.position.set(p.x, 0.34 + Math.random() * 0.2, p.z);
+    piece.position.set(p.x, 0.36 + Math.random() * 0.2, p.z);
     const angle = Math.random() * Math.PI * 2;
-    const speed = 4.5 + Math.random() * 4.8;
-    const lift = 2.8 + Math.random() * 2.6;
+    const speed = isSmoke ? 1.2 + Math.random() * 1.6 : 3.6 + Math.random() * 3.8;
+    const lift = isSmoke ? 1.2 + Math.random() * 1.3 : 2.4 + Math.random() * 2.1;
     piece.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
     scene.add(piece);
     particles.push({
@@ -1100,11 +1242,15 @@ function addExplosionBurst(cell) {
       vy: lift,
       spinX: (Math.random() - 0.5) * 18,
       spinY: (Math.random() - 0.5) * 18,
-      spinZ: (Math.random() - 0.5) * 18
+      spinZ: (Math.random() - 0.5) * 18,
+      smoke: isSmoke
     });
   }
 
-  fxBursts.push({ kind: 'mine', t: 0, core, shockwave, flash, particles });
+  fxBursts.push({ kind: 'mine', t: 0, core, plume, shockwave, flash, particles });
+  playExplosionSound();
+  triggerBlastPop(1, 700);
+  triggerCameraShake(1.15);
 }
 
 function openCell(cell) {
@@ -1116,7 +1262,6 @@ function openCell(cell) {
     cell.exploded = true;
     applyCellVisual(cell);
     addExplosionBurst(cell);
-    playExplosionSound();
     state.lives -= 1;
     enterDeadState(RESPAWN_SECONDS);
 
@@ -1174,6 +1319,7 @@ function getTargetCell() {
       const { x, y } = hit.object.userData;
       return state.cells[y][x];
     }
+    return null;
   }
   return getFeetCell();
 }
@@ -1323,8 +1469,10 @@ btnLeave.addEventListener('click', () => {
   state.localReady = false;
   state.mode = 'paused';
   state.mapOpen = false;
+  state.deadFx = 0;
   state.players = [];
   state.remotePlayers = {};
+  state.remoteDeadUntil = {};
   for (const avatar of remoteAvatars.values()) {
     scene.remove(avatar.group);
   }
@@ -1478,6 +1626,50 @@ window.__dev_force_explode_current = () => {
 window.__dev_cycle_dead_view = () => {
   cycleDeadView(1);
   return getDeadViewTarget();
+};
+window.__dev_preview_pung = () => {
+  if (state.screen !== 'playing' || state.mode !== 'playing') {
+    resetGame();
+    renderScreenState();
+  }
+
+  state.dead = false;
+  state.deadLeft = 0;
+  state.deadFx = 0;
+  renderer.domElement.style.filter = '';
+  deadVignette.style.opacity = '0';
+  deadVignette.style.transform = 'scale(1)';
+
+  const cx = Math.floor(GRID_SIZE / 2);
+  const cy = Math.floor(GRID_SIZE / 2);
+  const blastCell = state.cells?.[Math.max(0, cy - 3)]?.[cx] || state.cellsFlat?.[0];
+  if (!blastCell) return false;
+
+  const eyeCell = worldFromCell(cx, cy + 1);
+  camera.position.set(eyeCell.x, PLAYER_HEIGHT + 0.6, eyeCell.z + CELL_SIZE * 0.22);
+  state.yaw = 0;
+  state.pitch = -0.45;
+
+  addExplosionBurst(blastCell);
+  triggerBlastPop(1, 5000);
+  return { ok: true, blastCell: { x: blastCell.x, y: blastCell.y } };
+};
+window.__dev_repro_safe_open_patch = () => {
+  const c = getFeetCell() || state.cells?.[Math.floor(GRID_SIZE / 2)]?.[Math.floor(GRID_SIZE / 2)];
+  if (!c) return { ok: false, reason: 'no-cell' };
+  c.mine = true;
+  c.opened = false;
+  c.exploded = false;
+  c.flagged = false;
+  applyCellVisual(c);
+  applyServerCellPatch({ x: c.x, y: c.y, opened: true, exploded: false, number: 0 }, { emitFx: false });
+  return {
+    ok: true,
+    cell: { x: c.x, y: c.y },
+    opened: c.opened,
+    mine: c.mine,
+    capVisible: c.cap.visible
+  };
 };
 
 renderScreenState();
@@ -1686,6 +1878,31 @@ function updateDead(dt) {
   }
 }
 
+function updateDeadScreenFx(dt) {
+  const target = state.dead ? 1 : 0;
+  const speed = state.dead ? DEAD_FX_IN_SPEED : DEAD_FX_OUT_SPEED;
+  const alpha = 1 - Math.exp(-speed * dt);
+  state.deadFx += (target - state.deadFx) * alpha;
+  const amount = Math.max(0, Math.min(1, state.deadFx));
+
+  if (amount < 0.001) {
+    renderer.domElement.style.filter = '';
+    deadVignette.style.opacity = '0';
+    deadVignette.style.transform = 'scale(1)';
+  } else {
+    const saturation = 1 - amount * 0.95;
+    const contrast = 1 + amount * 0.05;
+    const blur = amount * 0.6;
+    renderer.domElement.style.filter = `saturate(${saturation.toFixed(3)}) contrast(${contrast.toFixed(3)}) blur(${blur.toFixed(2)}px)`;
+
+    const pulse = state.dead ? 0.95 + Math.sin(performance.now() * 0.0065) * 0.05 : 1;
+    const vignetteOpacity = Math.min(0.42, amount * 0.4) * pulse;
+    deadVignette.style.opacity = vignetteOpacity.toFixed(3);
+    deadVignette.style.transform = `scale(${(1 + amount * 0.006).toFixed(3)})`;
+  }
+
+}
+
 function updateFx(dt) {
   for (let i = fxBursts.length - 1; i >= 0; i -= 1) {
     const burst = fxBursts[i];
@@ -1696,22 +1913,28 @@ function updateFx(dt) {
     burst.t += dt;
     const t = burst.t;
 
-    burst.core.scale.setScalar(1 + t * 10);
-    burst.core.material.opacity = Math.max(0, 1 - t * 5);
-    burst.shockwave.scale.setScalar(1 + t * 7.5);
-    burst.shockwave.material.opacity = Math.max(0, 0.82 - t * 2.4);
-    burst.flash.intensity = Math.max(0, 1.8 - t * 7.2);
+    burst.core.scale.setScalar(1 + t * 4.6);
+    burst.core.material.opacity = Math.max(0, 1 - t * 2.4);
+    burst.plume.scale.setScalar(1 + t * 2.8);
+    burst.plume.material.opacity = Math.max(0, 0.6 - t * 1.2);
+    burst.shockwave.scale.setScalar(1 + t * 6.6);
+    burst.shockwave.material.opacity = Math.max(0, 0.8 - t * 2);
+    burst.flash.intensity = Math.max(0, 4.2 - t * 8.3);
 
     for (let j = burst.particles.length - 1; j >= 0; j -= 1) {
       const p = burst.particles[j];
-      p.vy -= 14 * dt;
+      p.vy -= (p.smoke ? 2.6 : 12.5) * dt;
       p.mesh.position.x += p.vx * dt;
       p.mesh.position.y += p.vy * dt;
       p.mesh.position.z += p.vz * dt;
       p.mesh.rotation.x += p.spinX * dt;
       p.mesh.rotation.y += p.spinY * dt;
       p.mesh.rotation.z += p.spinZ * dt;
-      if (p.mesh.position.y < 0.04 || t > 0.65) {
+      if (p.smoke) {
+        p.mesh.scale.multiplyScalar(1 + dt * 1.8);
+        p.mesh.material.opacity = Math.max(0, p.mesh.material.opacity - dt * 1.5);
+      }
+      if (p.mesh.position.y < 0.04 || t > 0.82 || p.mesh.material.opacity <= 0.02) {
         scene.remove(p.mesh);
         p.mesh.geometry.dispose();
         p.mesh.material.dispose();
@@ -1719,12 +1942,15 @@ function updateFx(dt) {
       }
     }
 
-    if (t > 0.65) {
+    if (t > 0.82) {
       scene.remove(burst.core);
+      scene.remove(burst.plume);
       scene.remove(burst.shockwave);
       scene.remove(burst.flash);
       burst.core.geometry.dispose();
       burst.core.material.dispose();
+      burst.plume.geometry.dispose();
+      burst.plume.material.dispose();
       burst.shockwave.geometry.dispose();
       burst.shockwave.material.dispose();
       fxBursts.splice(i, 1);
@@ -1735,6 +1961,16 @@ function updateFx(dt) {
 function updateRemoteAvatars(dt) {
   const now = Date.now();
   for (const [slot, avatar] of remoteAvatars.entries()) {
+    const hiddenUntil = state.remoteDeadUntil[slot] || 0;
+    const isHidden = hiddenUntil > now;
+    avatar.group.visible = !isHidden;
+    if (isHidden) {
+      clearAvatarChatBubble(slot);
+      continue;
+    }
+    if (hiddenUntil && hiddenUntil <= now) {
+      delete state.remoteDeadUntil[slot];
+    }
     const pos = state.remotePlayers[slot];
     if (!pos) continue;
     if (!Number.isFinite(pos.renderX)) pos.renderX = pos.targetX ?? 0;
@@ -1815,19 +2051,44 @@ function step(dt) {
   }
 
   updateDead(dt);
+  updateDeadScreenFx(dt);
   updateMovement(dt);
   updateFx(dt);
   updateRemoteAvatars(dt);
+  state.shakeT += dt * 60;
+  state.shakeAmp *= Math.exp(-8.8 * dt);
+
+  let shakeX = 0;
+  let shakeY = 0;
+  let shakeZ = 0;
+  let shakeYaw = 0;
+  let shakePitch = 0;
+  if (state.shakeAmp > 0.002) {
+    const t = state.shakeT;
+    const a = state.shakeAmp;
+    shakeX = (Math.sin(t * 1.9) + Math.cos(t * 2.6)) * 0.016 * a;
+    shakeY = Math.sin(t * 2.3) * 0.011 * a;
+    shakeZ = (Math.cos(t * 2.1) + Math.sin(t * 3.2)) * 0.021 * a;
+    shakeYaw = Math.sin(t * 1.6) * 0.009 * a;
+    shakePitch = Math.cos(t * 1.8) * 0.007 * a;
+  }
 
   camera.rotation.order = 'YXZ';
-  camera.rotation.y = state.yaw;
-  camera.rotation.x = state.pitch;
+  camera.position.x += shakeX;
+  camera.position.y += shakeY;
+  camera.position.z += shakeZ;
+  camera.rotation.y = state.yaw + shakeYaw;
+  camera.rotation.x = state.pitch + shakePitch;
 
   drawMap();
   setStatusText();
   setPointerLockText();
 
   renderer.render(scene, camera);
+
+  camera.position.x -= shakeX;
+  camera.position.y -= shakeY;
+  camera.position.z -= shakeZ;
 }
 
 let last = performance.now();
