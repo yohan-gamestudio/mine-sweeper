@@ -8,7 +8,7 @@ import { EVENT } from '../shared/protocol.js';
 import { validateClientEvent } from '../shared/validation.js';
 import { boardToPublicCells, createBoard, openCell, toggleFlag } from './board_engine.mjs';
 
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 3000);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

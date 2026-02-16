@@ -390,3 +390,10 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
 ### TODO / Notes
 - If needed, add reverse cycling (`Shift+C`) and on-screen spectate target label near crosshair.
 - Optional polish: brief camera shake synced with explosion burst.
+
+## Progress Update 15
+- Updated server bind default in `server/index.mjs`:
+  - `HOST` fallback changed from `127.0.0.1` to `0.0.0.0` for Kubernetes/container reachability.
+- Verification:
+  - Local port 3000 was already occupied (`EADDRINUSE`), so validated on alternate port.
+  - `PORT=3100 node server/index.mjs` + `curl http://127.0.0.1:3100/health` returned OK JSON.
