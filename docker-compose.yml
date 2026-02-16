@@ -8,6 +8,8 @@ services:
       - ws
   ws:
     build: .
+    environment:
+      - HOST=0.0.0.0
     command: npm run server:dev
     ports:
       - "3000:3000"

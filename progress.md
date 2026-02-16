@@ -362,3 +362,31 @@ Original prompt: 일단 싱글 모드로 만들어서 테스트해보자. 인게
   - `node scripts/ws_reconnect_smoke.mjs` passed
   - `node scripts/ws_reconnect_token_guard_smoke.mjs` passed
   - `scripts/playwright_smoke_scenarios.sh` passed
+
+## Progress Update 25 (Dead View Switch + Stronger Mine Explosion FX)
+- Implemented dead-state viewpoint switching on client:
+  - Added dead spectate target list (`self` + connected teammates).
+  - Added keybind `C` while dead to cycle viewpoint target.
+  - Dead camera now follows selected target; `self` keeps position lock with mouse-look enabled.
+  - HUD hint updated for dead/spectate controls.
+- Upgraded mine explosion visuals:
+  - Added core blast sphere + ground shockwave ring + short flash light.
+  - Added debris particles with ballistic motion/spin and proper cleanup/disposal.
+- Added dev verification hooks:
+  - `window.__dev_force_explode_current()` to force mine explosion on current cell.
+  - `window.__dev_cycle_dead_view()` to rotate dead view target for deterministic checks.
+- `render_game_to_text` now includes `player.dead_view_target` for automated validation.
+
+### Verification
+- `npm run build` passed after changes.
+- Playwright CLI scenario (2 sessions host/guest) passed:
+  - Room create/join/start sequence succeeded.
+  - Forced mine explosion returned `true` and state showed `dead=true`, `exploded=1`.
+  - After pressing `C`, `dead_view_target` changed from `self` to `p2`.
+  - Console error log: 0 errors (`.playwright-cli/console-2026-02-16T01-27-23-522Z.log`).
+- Skill client run executed on latest app URL:
+  - `node $WEB_GAME_CLIENT --url http://127.0.0.1:5173 ...` (warning only, run succeeded).
+
+### TODO / Notes
+- If needed, add reverse cycling (`Shift+C`) and on-screen spectate target label near crosshair.
+- Optional polish: brief camera shake synced with explosion burst.
