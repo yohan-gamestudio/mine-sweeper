@@ -15,7 +15,7 @@ const SPRINT_SPEED = 7;
 const JUMP_VELOCITY = 6;
 const GRAVITY = 20;
 const PROTOCOL_EVENT_COUNT = Object.keys(EVENT).length;
-const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:3000/ws`;
+const WS_URL = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:3000/ws`;
 const ROOM_SLOTS = ['p1', 'p2', 'p3', 'p4'];
 const HOST_SLOT = ROOM_SLOTS[0];
 const PLAYER_COLLISION_RADIUS = 0.7;
