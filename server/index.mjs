@@ -1,5 +1,8 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { EVENT } from '../shared/protocol.js';
 import { validateClientEvent } from '../shared/validation.js';
@@ -7,6 +10,56 @@ import { boardToPublicCells, createBoard, openCell, toggleFlag } from './board_e
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3000);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DIST_DIR = path.resolve(__dirname, '../dist');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.map': 'application/json; charset=utf-8'
+};
+
+function sendStaticFile(res, filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const mime = MIME[ext] || 'application/octet-stream';
+  const data = fs.readFileSync(filePath);
+  res.writeHead(200, { 'content-type': mime, 'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable' });
+  res.end(data);
+}
+
+function tryServeStatic(req, res) {
+  if (!fs.existsSync(DIST_DIR)) return false;
+  const parsed = new URL(req.url || '/', 'http://localhost');
+  const pathname = decodeURIComponent(parsed.pathname);
+  const normalized = path.posix.normalize(pathname);
+  const asFile = path.resolve(DIST_DIR, `.${normalized}`);
+
+  if (!asFile.startsWith(DIST_DIR)) return false;
+  if (fs.existsSync(asFile) && fs.statSync(asFile).isFile()) {
+    sendStaticFile(res, asFile);
+    return true;
+  }
+
+  const isAssetLike = normalized.startsWith('/assets/') || path.extname(normalized) !== '';
+  if (isAssetLike) return false;
+
+  const indexPath = path.resolve(DIST_DIR, 'index.html');
+  if (fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) {
+    sendStaticFile(res, indexPath);
+    return true;
+  }
+  return false;
+}
 
 const server = http.createServer((req, res) => {
   const { url, method } = req;
@@ -28,6 +81,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(204);
     res.end();
     return;
+  }
+
+  if ((method === 'GET' || method === 'HEAD') && url !== '/ws') {
+    if (tryServeStatic(req, res)) return;
   }
 
   res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });

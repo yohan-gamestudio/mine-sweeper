@@ -3,4 +3,6 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-EXPOSE 5173 3000
+RUN npm run build
+EXPOSE 3000
+CMD ["npm", "run", "server:dev"]
